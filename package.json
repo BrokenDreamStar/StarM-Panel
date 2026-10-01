@@ -1,0 +1,38 @@
+{
+  "name": "starm-panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "module": "src/server/index.ts",
+  "scripts": {
+    "dev": "bun run --parallel dev:server dev:web",
+    "dev:server": "bun --watch src/server/index.ts",
+    "dev:web": "vite",
+    "build": "bun run build:web && bun run build:assets && bun run build:bin",
+    "build:web": "vite build",
+    "build:assets": "bun run scripts/gen-assets.ts",
+    "build:bin": "bun run scripts/build.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
+    "@iconify/vue": "^5.0.3",
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.11",
+    "naive-ui": "^2.45.3",
+    "pinia": "^4.0.3",
+    "systeminformation": "^5.33.14",
+    "vue": "^3.5.43",
+    "vue-router": "^5.3.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "^5",
+    "vite": "^8.3.1",
+    "vue-tsc": "^3.3.11"
+  }
+}

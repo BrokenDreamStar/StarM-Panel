@@ -1,0 +1,509 @@
+/* ============================================================
+   StarM Panel —— 设计系统 v2「白玻璃 · 去线留白」
+   ------------------------------------------------------------
+   三条硬规则，所有组件都必须服从：
+     1. 去线：卡片、控件、列表行一律不使用 border / 分割线。
+        层次只靠三件事表达 —— 留白、色阶、投影。
+        （焦点环例外：那是可达性 affordance，不是装饰线。）
+     2. 白色毛玻璃：卡片是 rgba(255,255,255,α) + backdrop-filter，
+        浅色下 α≈0.62（真的白），深色下 α≈0.075（压在深底上的白霜）。
+     3. 小曲率圆角：只有 4 / 6 / 8 / 10 四档，见 --r-*。
+        旧的 14px 卡片角和 999px 胶囊全部收敛掉。
+
+   深色是 :root 默认；[data-theme='light'] 覆盖为浅色。
+   --accent / --blur 由 App.vue 运行时写入。
+   不使用 UnoCSS / Tailwind —— 全部手写，配合 <style scoped>。
+
+   文件顺序：① 令牌 ② 基础排版 ③ 通用工具类
+             ④ 滚动条/焦点/动效 ⑤ Naive UI 全局覆盖
+   ============================================================ */
+
+:root {
+  /* ── 圆角：全系统只有这四档 ─────────────────────────────── */
+  --r-xs: 4px;   /* 徽标、进度条、小 chip */
+  --r-sm: 6px;   /* 控件：输入框 / 按钮 / 下拉 / 开关 */
+  --r-md: 8px;   /* 卡片 / 浮层小块 */
+  --r-lg: 10px;  /* 弹窗 */
+
+  /* ── 留白刻度：4 的倍数，卡片内距一律取自这里 ───────────── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 22px;
+  --sp-6: 28px;
+  --sp-7: 40px;
+
+  --accent: #6366f1;
+  --blur: 12px;
+  --glass: blur(var(--blur)) saturate(1.8);
+
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #f87171;
+
+  --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* ── 深色档 ─────────────────────────────────────────────────
+     卡片是「白霜」而不是白纸：α 只有 0.075，靠投影和文字色阶分层。
+     投影在深底上要够沉，否则卡片和壁纸糊成一片。 */
+  --bg: #07090d;
+  --text: #eef2f8;
+  --text-2: #9dabbe;
+  --text-3: #6a7688;
+
+  --card-bg: rgba(255, 255, 255, 0.075);
+  --card-bg-hi: rgba(255, 255, 255, 0.13);
+  /* 比卡片更实的一档：弹窗、左侧导航这类需要「挡住后面内容」的面 */
+  --surface: rgba(17, 20, 27, 0.78);
+  --surface-2: rgba(255, 255, 255, 0.05);
+  /* 控件底（输入框 / 下拉 / 图标格）：只有一层极淡的色块，没有任何线 */
+  --field: rgba(255, 255, 255, 0.06);
+  --field-hi: rgba(255, 255, 255, 0.11);
+  --hover: rgba(255, 255, 255, 0.09);
+  --track: rgba(255, 255, 255, 0.16);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --shadow-2: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 24px 60px -20px rgba(0, 0, 0, 0.66);
+  --hero-glow: 0 2px 24px rgba(0, 0, 0, 0.45);
+
+  --wallpaper-blur: 12px;
+
+  /* ── 渐变壁纸的四个色斑 ─────────────────────────────────────
+     白玻璃要在上面「看得见透不透」，壁纸必须有足够色相位移；
+     深色底吃色快，所以 α 要给得比浅色档高得多。 */
+  --wp-1: color-mix(in srgb, var(--accent) 52%, transparent);
+  --wp-2: rgba(56, 189, 248, 0.34);
+  --wp-3: rgba(168, 85, 247, 0.3);
+  --wp-4: rgba(45, 212, 191, 0.2);
+}
+
+/* ── 浅色档 ─────────────────────────────────────────────────
+   这里才是「白色毛玻璃」的本体：62% 的白 + 模糊，文字反转为深色。
+   前提是底色必须比卡片暗一档 —— 底色一旦接近纯白，白玻璃就会和页面
+   糊成一片（去线之后没有描边兜底，层次只剩色阶和投影）。
+   所以 --bg 压到冷灰蓝，阴影也必须留在 16% 以内，否则白玻璃上会出现脏边。 */
+[data-theme='light'] {
+  --bg: #e4e9f2;
+  --text: #141920;
+  --text-2: #5c6675;
+  --text-3: #8b95a4;
+
+  --card-bg: rgba(255, 255, 255, 0.62);
+  --card-bg-hi: rgba(255, 255, 255, 0.84);
+  --surface: rgba(255, 255, 255, 0.88);
+  --surface-2: rgba(20, 25, 36, 0.035);
+  --field: rgba(20, 25, 36, 0.045);
+  --field-hi: rgba(20, 25, 36, 0.075);
+  --hover: rgba(20, 25, 36, 0.055);
+  --track: rgba(20, 25, 36, 0.1);
+
+  --shadow-1: 0 1px 2px rgba(18, 25, 40, 0.06), 0 2px 6px -2px rgba(18, 25, 40, 0.07);
+  --shadow-2: 0 12px 28px -14px rgba(18, 25, 40, 0.2);
+  --shadow-3: 0 28px 64px -24px rgba(18, 25, 40, 0.26);
+  --hero-glow: 0 2px 22px rgba(255, 255, 255, 0.85);
+
+  /* 色斑要盖得住更深的底色，比深色档低一档但仍清晰可辨 */
+  --wp-1: color-mix(in srgb, var(--accent) 30%, transparent);
+  --wp-2: rgba(56, 189, 248, 0.24);
+  --wp-3: rgba(168, 85, 247, 0.2);
+  --wp-4: rgba(45, 212, 191, 0.15);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.62;
+  letter-spacing: 0.005em;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================================
+   ① 通用工具类
+   ============================================================ */
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.dim {
+  color: var(--text-2);
+}
+
+/* 白玻璃卡片 —— 无边框。层次全部来自「透出来的壁纸 + 一层极柔的投影」，
+   hover 只加深玻璃、抬 1px，不出现任何描边。 */
+.card {
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--card-bg);
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
+  box-shadow: var(--shadow-1);
+}
+
+.card-raised {
+  box-shadow: var(--shadow-2);
+}
+
+/* 需要挡住后面内容的浮层（弹窗 / 左侧导航）用 --surface，不是卡片 */
+.surface {
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
+  box-shadow: var(--shadow-2);
+}
+
+/* 控件底：输入框、下拉、图标格共用的「只有一层色块」的语言 */
+.field {
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--field);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.006em;
+}
+
+/* 首页分区标题（「系统状态」/「APP」）：小字 + 字距。
+   字距刻意不到 0.18em —— 中文没有大小写，过宽的字距会把「系 统 状 态」
+   拆成五个孤立的字，读起来像标语不像标题。 */
+.section-title {
+  margin: 0 0 var(--sp-4);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+  opacity: 0.82;
+  text-shadow: var(--hero-glow);
+}
+
+/* 无边框徽标：去线之后只保留色相底，高度压到 18px 让它像「注脚」 */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 0;
+  border-radius: var(--r-xs);
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-2);
+  flex: none;
+}
+
+.dot.ok {
+  background: var(--ok);
+}
+
+.dot.warn {
+  background: var(--warn);
+}
+
+.dot.err {
+  background: var(--err);
+}
+
+/* 唯一保留的「线状」元素是进度条本体，它不是分隔线；端点收到 3px */
+.bar,
+.track {
+  display: block;
+  height: 4px;
+  border-radius: var(--r-xs);
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar > i,
+.track > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-xs);
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+/* 错误提示：色块 + 留白，不用描边（旧版是 1px err border） */
+.note-err {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 14%, transparent);
+}
+
+/* ============================================================
+   ② 滚动条 / 焦点 / 动效
+   ============================================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-2) 35%, transparent) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-2) 28%, transparent);
+  border-radius: var(--r-xs);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-2) 46%, transparent);
+}
+
+/* 焦点环是被刻意保留的：去线指的是去掉装饰性 hairline，
+   键盘可达性不能一起去掉。做得比旧版更柔（外发光而不是硬描边）。
+   刻意不写 border-radius —— 外发光会跟随元素自身圆角，继承父级反而会改形状。 */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   ③ Naive UI 全局覆盖
+   ------------------------------------------------------------
+   组件自己的 scoped 样式够不到 .n-* 的内部结构，这一节负责把
+   Naive 的边框线、大圆角、深色实心底统一换成上面的语言。
+   themeOverrides（见 App.vue）管能配置的，这里管配置不到的
+   伪元素边框（__border / __state-border）。
+   ============================================================ */
+
+/* 圆角：Naive 的 --n-border-radius 会散布在各组件里，统一收一档 */
+.n-card,
+.n-modal,
+.n-drawer,
+.n-popover,
+.n-dropdown-menu,
+.n-inner-modal {
+  border-radius: var(--r-lg) !important;
+}
+
+.n-button,
+.n-input,
+.n-base-selection,
+.n-tag,
+.n-alert,
+.n-checkbox .n-checkbox__box,
+.n-color-picker,
+.n-input-number,
+.n-tabs-segment .n-tab-pane,
+.n-pagination-bar {
+  border-radius: var(--r-sm) !important;
+}
+
+/* 输入类控件的线：Naive 用两个绝对定位伪元素画「常态边框」和
+   「状态边框」，两者都必须干掉，只留下 --field 色块。 */
+.n-input__border,
+.n-input__state-border,
+.n-base-selection__border,
+.n-base-selection__state-border,
+.n-data-table-borders,
+.n-divider:not(.n-divider--vertical) .n-divider__line {
+  display: none !important;
+}
+
+/* 焦点/悬停时 Naive 会把 state-border 换成 box-shadow 描边 —— 同样去掉，
+   改成外发光，和 :focus-visible 的规则保持一致 */
+.n-input:not(.n-input--disabled):hover .n-input__state-border,
+.n-base-selection:not(.n-base-selection--disabled):hover .n-base-selection__state-border {
+  display: block !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.n-input--focus .n-input__state-border,
+.n-base-selection--active .n-base-selection__state-border,
+.n-base-selection--focus .n-base-selection__state-border {
+  display: block !important;
+  border: 0 !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent) !important;
+  border-radius: var(--r-sm) !important;
+}
+
+/* 控件底色走 --field，跟随主题反转（Naive 默认给的是实白/实黑） */
+.n-input,
+.n-base-selection,
+.n-input-number .n-input,
+.n-color-picker-trigger {
+  background-color: var(--field) !important;
+}
+
+.n-input--disabled,
+.n-base-selection--disabled {
+  opacity: 0.42 !important;
+}
+
+/* 下拉菜单 / 弹出层：用 --surface 而不是 Naive 的实色面板 */
+.n-popover:not(.n-popover--plain),
+.n-dropdown .n-dropdown-menu,
+.n-select-menu,
+.n-card.n-popper {
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-3) !important;
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
+}
+
+.n-popover__content,
+.n-dropdown-option {
+  color: var(--text);
+}
+
+.n-base-option:hover,
+.n-dropdown-option.n-dropdown-option--selected {
+  background: var(--hover) !important;
+}
+
+/* 弹窗：遮罩压得更狠一点，白玻璃浮层才立得住 */
+.n-modal-mask {
+  background-color: rgba(6, 9, 14, 0.55) !important;
+  backdrop-filter: blur(6px);
+}
+
+.n-modal .n-card,
+.n-modal-presets.n-card {
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-3) !important;
+  backdrop-filter: var(--glass);
+  -webkit-backdrop-filter: var(--glass);
+}
+
+.n-card-header__main {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* 表格线：详情弹窗里的 kv 行不靠 Naive 的 bordered */
+.n-card__bordered,
+.n-card:not(.n-card--bordered)::after {
+  display: none;
+}
+
+/* 表单：标签与控件的间距交给留白 */
+.n-form-item.n-form-item--top-labelled .n-form-item-label {
+  padding-bottom: var(--sp-2);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--text-2);
+}
+
+.n-form-item-label__text {
+  font-weight: 500;
+}
+
+/* 分段式 tabs（图标选择器改用 segment，避免下划线） */
+.n-tabs-wrapper.n-tabs--segment-type .n-tabs-bar {
+  border-radius: var(--r-xs) !important;
+}
+
+/* 滑块：轨道用 --track，去描边 */
+.n-slider .n-slider-rail {
+  background-color: var(--track) !important;
+}
+
+.n-slider .n-slider-rail__color {
+  background-color: color-mix(in srgb, var(--accent) 80%, transparent) !important;
+}
+
+/* 标签 / 提示条：一律无边框 */
+.n-tag {
+  border: 0 !important;
+  background: var(--surface-2) !important;
+  color: var(--text-2);
+}
+
+.n-alert {
+  border: 0 !important;
+  background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
+}
+
+.n-alert--warning-type {
+  background: color-mix(in srgb, var(--warn) 16%, transparent) !important;
+}
+
+.n-alert--error-type {
+  background: color-mix(in srgb, var(--err) 16%, transparent) !important;
+}
+
+.n-alert__content {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* 文字按钮：去掉 hover 时的实底色块，只留色阶变化 */
+.n-button--text-type,
+.n-button--quaternary-type {
+  color: var(--text-2);
+}
+
+.n-button--text-type:hover,
+.n-button--quaternary-type:hover {
+  color: var(--text);
+  background: var(--hover) !important;
+}
+
+.n-button {
+  font-weight: 500;
+}
+
+.n-button--primary-type {
+  box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+}

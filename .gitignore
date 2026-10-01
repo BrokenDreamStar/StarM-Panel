@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+
+# 运行时数据（app.db / secret.key 等）
+data/
+
+# 工作区内的本地工具链（Bun 二进制）
+.tools/
+
+# 编辑器 / 系统
+.DS_Store
+*.log
+.vscode/*
+!.vscode/extensions.json
+.idea/
