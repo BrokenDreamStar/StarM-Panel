@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────
 
 export type NetworkPref = 'auto' | 'lan' | 'wan'
-export type NetworkMode = 'lan' | 'wan' | 'auto'
+export type NetworkMode = 'lan' | 'wan'
 /**
  * 卡片打开方式。这是**全局设置**（`ui.openMode`）而不是卡片字段：
  * 同一个面板里的卡片几乎不会各自要求不同的打开方式。
@@ -266,17 +266,6 @@ export interface ResolvedUrl {
 }
 
 export interface ResolveContext {
+  /** 已落地的具体模式：自动模式由调用方按访问方式（isLanHost）先解析再传入 */
   mode: NetworkMode
-  /** 自动模式下：该卡片内网地址是否可达（来自服务端探测缓存） */
-  lanReachable?: boolean
 }
-
-export interface ProbeEntry {
-  /** null = 被 SSRF 白名单拒绝，未实际探测 */
-  reachable: boolean | null
-  /** Unix 毫秒 */
-  checkedAt: number
-  reason?: 'blocked' | 'no-url' | 'error'
-}
-
-export type ProbeStatus = Record<number, ProbeEntry>

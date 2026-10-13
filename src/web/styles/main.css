@@ -5,13 +5,17 @@
      1. 去线：卡片、控件、列表行一律不使用 border / 分割线。
         层次只靠三件事表达 —— 留白、色阶、投影。
         （焦点环例外：那是可达性 affordance，不是装饰线。）
-     2. 白色毛玻璃：卡片是 rgba(255,255,255,α) + backdrop-filter，
-        浅色下 α≈0.62（真的白），深色下 α≈0.075（压在深底上的白霜）。
-     3. 小曲率圆角：只有 4 / 6 / 8 / 10 四档，见 --r-*。
-        旧的 14px 卡片角和 999px 胶囊全部收敛掉。
+     2. 白色毛玻璃：卡片是半透明底 + backdrop-filter，
+        浅色下 #FFFFFFCC（80% 奶白，能透出约两成壁纸），深色下 #22262D（深灰实底）。
+        只写标准 backdrop-filter，**不要**再手写 `-webkit-backdrop-filter`：
+        Vite 的 Lightning CSS 会把两个同名声明去重、只留带前缀的那个，
+        而 Chromium 152 已不再解析 `-webkit-backdrop-filter`，毛玻璃会静默失效。
+     3. 小曲率圆角：4 / 6 / 8 / 10 三档常规 + 卡片 16px（--r-xl），
+        卡片档与 sun-panel 参考实现对齐。
 
    深色是 :root 默认；[data-theme='light'] 覆盖为浅色。
-   --accent / --blur 由 App.vue 运行时写入。
+   --accent 由 App.vue 运行时写入；--blur 是毛玻璃半径，frost 风格下由
+   设置 ui.frostBlur 经 useGlassTheme 写 inline 覆盖，这里的 12px 是默认兜底。
    不使用 UnoCSS / Tailwind —— 全部手写，配合 <style scoped>。
 
    文件顺序：① 令牌 ② 基础排版 ③ 通用工具类
@@ -19,11 +23,12 @@
    ============================================================ */
 
 :root {
-  /* ── 圆角：全系统只有这四档 ─────────────────────────────── */
+  /* ── 圆角：常规四档 + 卡片档（对齐 sun-panel 16px）───────── */
   --r-xs: 4px;   /* 徽标、进度条、小 chip */
   --r-sm: 6px;   /* 控件：输入框 / 按钮 / 下拉 / 开关 */
-  --r-md: 8px;   /* 卡片 / 浮层小块 */
+  --r-md: 8px;   /* 浮层小块 */
   --r-lg: 10px;  /* 弹窗 */
+  --r-xl: 16px;  /* 卡片（应用卡 / 监控块 / 骨架屏） */
 
   /* ── 留白刻度：4 的倍数，卡片内距一律取自这里 ───────────── */
   --sp-1: 4px;
@@ -35,6 +40,7 @@
   --sp-7: 40px;
 
   --accent: #6366f1;
+  /* 毛玻璃模糊半径（px）：默认 12，frost 下由设置 ui.frostBlur 覆盖 */
   --blur: 12px;
   --glass: blur(var(--blur)) saturate(1.8);
 
@@ -45,17 +51,39 @@
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   /* ── 深色档 ─────────────────────────────────────────────────
-     卡片是「白霜」而不是白纸：α 只有 0.075，靠投影和文字色阶分层。
+     卡片是深灰（#22262D；从用户指定的 #000000FF 一路抬亮而来），
+     比页面底色 (#07090d) 明显亮一档，分层靠投影和 hover 抬亮。
      投影在深底上要够沉，否则卡片和壁纸糊成一片。 */
   --bg: #07090d;
   --text: #eef2f8;
   --text-2: #9dabbe;
   --text-3: #6a7688;
 
-  --card-bg: rgba(255, 255, 255, 0.075);
-  --card-bg-hi: rgba(255, 255, 255, 0.13);
-  /* 比卡片更实的一档：弹窗、左侧导航这类需要「挡住后面内容」的面 */
-  --surface: rgba(17, 20, 27, 0.78);
+  /* 壁纸直排文字（标题/时钟/分区与分组标题）：默认跟随主题文字色，
+     设置里的「壁纸文字颜色」经 <html data-wpt> 切到固定白/黑 */
+  --wp-text: var(--text);
+  --wp-text-2: var(--text-2);
+  --wp-text-3: var(--text-3);
+
+  /* ── 卡片底色 ───────────────────────────────────────────────
+     色相（--card-rgb / --card-hi-rgb）随主题与 UI 风格切换；透明度只有
+     --card-a 一个变量，由设置「卡片透明度」经 useGlassTheme 写 inline
+     （alpha = 1 - 透明度%）。这里的默认值 = 该风格的出厂透明度，兼作
+     设置加载前的首帧兜底。 */
+  --card-rgb: 34 38 45;
+  --card-hi-rgb: 43 48 58;
+  --card-a: 0.8;
+  /* hover 抬亮的一档 α：浅色档由 0.05 改在下方覆盖 */
+  --card-a-step: 0.06;
+  --card-bg: rgb(var(--card-rgb) / var(--card-a));
+  --card-bg-hi: rgb(var(--card-hi-rgb) / min(1, var(--card-a) + var(--card-a-step)));
+  /* ── 面：弹窗 / 二级菜单这类需要「挡住后面内容」的浮层材质 ──────
+     与卡片同一套色相（取卡片 hover 那一档高光色），透明度取
+     max(0.74, --card-a) —— 跟随 UI 风格与卡片透明度，但保底不透明到
+     文字不可读。solid 风格下 --card-a=1，面即实色（与旧版观感一致）。 */
+  --surface-rgb: var(--card-hi-rgb);
+  --surface-a: max(0.74, var(--card-a));
+  --surface: rgb(var(--surface-rgb) / var(--surface-a));
   --surface-2: rgba(255, 255, 255, 0.05);
   /* 控件底（输入框 / 下拉 / 图标格）：只有一层极淡的色块，没有任何线 */
   --field: rgba(255, 255, 255, 0.06);
@@ -66,9 +94,6 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.22);
   --shadow-2: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
   --shadow-3: 0 24px 60px -20px rgba(0, 0, 0, 0.66);
-  --hero-glow: 0 2px 24px rgba(0, 0, 0, 0.45);
-
-  --wallpaper-blur: 12px;
 
   /* ── 渐变壁纸的四个色斑 ─────────────────────────────────────
      白玻璃要在上面「看得见透不透」，壁纸必须有足够色相位移；
@@ -80,7 +105,9 @@
 }
 
 /* ── 浅色档 ─────────────────────────────────────────────────
-   这里才是「白色毛玻璃」的本体：62% 的白 + 模糊，文字反转为深色。
+   这里才是「白色毛玻璃」的本体：α0.8 的奶白（--card-a）+ 模糊，文字反转为深色。
+   alpha 定在 80%：再高（如 94%）透出的背景只剩个位数色差，
+   视觉上就是实色卡，玻璃感全靠 backdrop-blur 也撑不起来。
    前提是底色必须比卡片暗一档 —— 底色一旦接近纯白，白玻璃就会和页面
    糊成一片（去线之后没有描边兜底，层次只剩色阶和投影）。
    所以 --bg 压到冷灰蓝，阴影也必须留在 16% 以内，否则白玻璃上会出现脏边。 */
@@ -90,9 +117,12 @@
   --text-2: #5c6675;
   --text-3: #8b95a4;
 
-  --card-bg: rgba(255, 255, 255, 0.62);
-  --card-bg-hi: rgba(255, 255, 255, 0.84);
-  --surface: rgba(255, 255, 255, 0.88);
+  --card-rgb: 255 255 255;
+  --card-hi-rgb: 255 255 255;
+  --card-a: 0.8;
+  --card-a-step: 0.05;
+  /* 浅色下白玻璃本身已经够亮，面的保底α再抬高一点避免透出脏底 */
+  --surface-a: max(0.8, var(--card-a));
   --surface-2: rgba(20, 25, 36, 0.035);
   --field: rgba(20, 25, 36, 0.045);
   --field-hi: rgba(20, 25, 36, 0.075);
@@ -102,13 +132,65 @@
   --shadow-1: 0 1px 2px rgba(18, 25, 40, 0.06), 0 2px 6px -2px rgba(18, 25, 40, 0.07);
   --shadow-2: 0 12px 28px -14px rgba(18, 25, 40, 0.2);
   --shadow-3: 0 28px 64px -24px rgba(18, 25, 40, 0.26);
-  --hero-glow: 0 2px 22px rgba(255, 255, 255, 0.85);
 
   /* 色斑要盖得住更深的底色，比深色档低一档但仍清晰可辨 */
   --wp-1: color-mix(in srgb, var(--accent) 30%, transparent);
   --wp-2: rgba(56, 189, 248, 0.24);
   --wp-3: rgba(168, 85, 247, 0.2);
   --wp-4: rgba(45, 212, 191, 0.15);
+}
+
+/* ── 扁平化档（html[data-glass='solid']，UI 风格「扁平化」，出厂默认）──
+   卡片是纯色底：--glass 一处置 none，所有经 var(--glass) 取模糊的卡片 /
+   浮层全局失效，性能开销最小。透明度照常可调（只透一层纯色，没有模糊
+   与折射）—— 与毛玻璃的区别不再靠「不透明」，而是后者的磨砂材质。
+   默认色沿用旧观感：浅色 #FFFFFF / 深色 #45484F；出厂透明度 10%（α0.9）。 */
+html[data-glass='solid'] {
+  --glass: none;
+  --card-rgb: 69 72 79;
+  --card-hi-rgb: 79 82 90;
+  --card-a: 0.9;
+}
+
+html[data-theme='light'][data-glass='solid'] {
+  --card-rgb: 255 255 255;
+  --card-hi-rgb: 255 255 255;
+  --card-a: 0.9;
+}
+
+/* ── 液态玻璃档（html[data-glass='liquid']）──────────────────
+   浅色档 = 白色液态玻璃（半透明白底 + 高斯模糊 + 边缘高光，与浮层同一套材质）；
+   深色档 = 保持透明：不铺烟色/黑底，只靠高斯模糊与 specular 边缘光把壁纸
+   透出来（黑底会把暗色壁纸压成一块糊掉的深色卡）。 */
+html[data-glass='liquid'] {
+  --card-rgb: 18 22 28;
+  --card-hi-rgb: 18 22 28;
+  --card-a: 0.15;
+  /* 深色档：透明底；hover 只给极淡的白色反馈 */
+  --card-bg: transparent;
+  --card-bg-hi: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='light'][data-glass='liquid'] {
+  --card-rgb: 255 255 255;
+  --card-hi-rgb: 255 255 255;
+  /* 浅色档：白色半透明底，复用 --surface 与浮层完全一致 */
+  --card-bg: var(--surface);
+  --card-bg-hi: rgb(var(--card-hi-rgb) / min(1, var(--surface-a) + var(--card-a-step)));
+}
+
+/* ── 壁纸文字自定义档 ───────────────────────────────────────
+   壁纸明暗不受主题控制：深色壁纸吃掉主题黑字，浅色壁纸吃掉主题白字。
+   data-wpt 由设置 ui.wallpaperText 写入；auto 时不带属性、跟随主题。 */[data-wpt='light'] {
+  --wp-text: #ffffff;
+  --wp-text-2: rgba(255, 255, 255, 0.78);
+  --wp-text-3: rgba(255, 255, 255, 0.55);
+}
+
+[data-wpt='dark'] {
+  --wp-text: #12161d;
+  --wp-text-2: rgba(18, 22, 29, 0.75);
+  --wp-text-3: rgba(18, 22, 29, 0.55);
 }
 
 * {
@@ -137,6 +219,13 @@ body {
   overflow: hidden;
 }
 
+/* 窄屏下页面退化为文档整体滚动（见各视图的 ≤900px 媒体查询） */
+@media (max-width: 900px) {
+  body {
+    overflow: auto;
+  }
+}
+
 #app {
   display: flex;
   flex-direction: column;
@@ -162,7 +251,6 @@ body {
   border-radius: var(--r-md);
   background: var(--card-bg);
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-1);
 }
 
@@ -170,13 +258,223 @@ body {
   box-shadow: var(--shadow-2);
 }
 
-/* 需要挡住后面内容的浮层（弹窗 / 左侧导航）用 --surface，不是卡片 */
+/* ── 液态玻璃材质（html[data-glass='liquid'] 由 useGlassTheme 写入）────
+   白色液态玻璃 = 半透明底（--card-bg = --surface）+ 高斯模糊 + 边缘高光，
+   与设置弹窗等浮层是同一套材质：
+     specular 边缘光 —— 顶边最亮、侧边次之、底边是反光，模拟单一
+     上方光源扫过玻璃棱边；再垫主题化外投影把玻璃「浮」起来。
+   挂在独立 ::after 上（卡片组件都没占用它）。
+   浮层（弹窗 / 二级菜单）共用同一套边缘光，见下方 .surface 块。 */
+[data-glass='liquid'] [data-glass-card],
+[data-glass='liquid'] .card,
+[data-glass='liquid'] .add-tile,
+[data-glass='liquid'] .float-controls .group {
+  position: relative;
+}
+
+[data-glass='liquid'] [data-glass-card]::after,
+[data-glass='liquid'] .card::after,
+[data-glass='liquid'] .add-tile::after,
+[data-glass='liquid'] .float-controls .group::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.24),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.17),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.15),
+    inset 0 0 14px rgba(255, 255, 255, 0.055),
+    var(--shadow-2);
+}
+
+/* ── 浮层的液态玻璃材质 ─────────────────────────────────────
+   设置弹窗 / 详情弹窗 / 二级菜单（下拉、选择、气泡）在 liquid 风格下
+   与卡片共用「光泽层 + specular 边缘光」，只是不再叠加外投影 ——
+   浮层本身已有 --shadow-3，再堆一层会把投影糊成一团。
+   .n-card 的 ::after 在别处被 display:none 关过（去边框），这里显式恢复。 */
+[data-glass='liquid'] .surface,
+[data-glass='liquid'] .settings-modal,
+[data-glass='liquid'] .n-modal.n-card,
+[data-glass='liquid'] .n-modal .n-card,
+[data-glass='liquid'] .n-modal-presets.n-card,
+[data-glass='liquid'] .n-popover:not(.n-popover--plain),
+[data-glass='liquid'] .n-dropdown-menu,
+[data-glass='liquid'] .n-select-menu,
+[data-glass='liquid'] .n-dialog {
+  position: relative;
+}
+
+[data-glass='liquid'] .surface::after,
+[data-glass='liquid'] .settings-modal::after,
+[data-glass='liquid'] .n-modal.n-card::after,
+[data-glass='liquid'] .n-modal .n-card::after,
+[data-glass='liquid'] .n-modal-presets.n-card::after,
+[data-glass='liquid'] .n-popover:not(.n-popover--plain)::after,
+[data-glass='liquid'] .n-dropdown-menu::after,
+[data-glass='liquid'] .n-select-menu::after,
+[data-glass='liquid'] .n-dialog::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* !important：文件后面的 Naive 去边框规则
+     .n-card:not(.n-card--bordered)::after{display:none} 与本选择器同权重，
+     不抬权会把浮层的液态边缘光一起关掉 */
+  display: block !important;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.24),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.17),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.15),
+    inset 0 0 14px rgba(255, 255, 255, 0.055);
+}
+
+/* ── 毛玻璃材质（html[data-glass='frost']）────────────────────
+   blur 只解决「背后壁纸糊不糊」；磨砂玻璃还有材质本身的语言，否则把
+   模糊度调到 0、透明度调到 0 就和扁平化完全重叠。这一层给三件事：
+     ① 奶光渐变 —— 上亮下柔的白纱，底部收一点冷调，白卡上也能看出竖直层次；
+     ② 散射内晕 —— 一圈很淡的冷色内发光，模拟磨砂边缘把光打散（不是硬边线）；
+     ③ 浮起投影 —— 比扁平化厚一档，像一块玻璃板悬在页面上。
+   强度整体比液态玻璃克制：液态是锐利 specular + 折射，磨砂是漫射 + 雾面。 */
+[data-glass='frost'] {
+  /* 背板比中性模糊再提一点亮、加饱和，透出背景时更「磨砂玻璃」 */
+  --glass: blur(var(--blur)) saturate(1.8) brightness(1.04);
+  /* 磨砂雾面（feTurbulence 灰度噪点 → 高斯模糊）：靠它给卡片「霜面」质感，
+     白卡上也看得见。后接 feGaussianBlur 把颗粒打散成柔雾（而不是数码噪点），
+     透明度压得很低，不至于盖过文字 */
+  --frost-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeGaussianBlur stdDeviation='0.7'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.22'/%3E%3C/svg%3E");
+}
+
+[data-glass='frost'] [data-glass-card],
+[data-glass='frost'] .card,
+[data-glass='frost'] .add-tile,
+[data-glass='frost'] .float-controls .group {
+  position: relative;
+}
+
+[data-glass='frost'] [data-glass-card]::after,
+[data-glass='frost'] .card::after,
+[data-glass='frost'] .add-tile::after,
+[data-glass='frost'] .float-controls .group::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    var(--frost-grain) 0 0 / 120px 120px repeat,
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.46) 0%,
+      rgba(255, 255, 255, 0.08) 34%,
+      rgba(255, 255, 255, 0) 56%,
+      color-mix(in srgb, #33507f 12%, transparent) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -3px 10px -3px rgba(43, 66, 112, 0.18),
+    inset 0 0 30px rgba(56, 92, 160, 0.1),
+    var(--shadow-2);
+}
+
+[data-theme='dark'][data-glass='frost'] [data-glass-card]::after,
+[data-theme='dark'][data-glass='frost'] .card::after,
+[data-theme='dark'][data-glass='frost'] .add-tile::after,
+[data-theme='dark'][data-glass='frost'] .float-controls .group::after {
+  background:
+    var(--frost-grain) 0 0 / 120px 120px repeat,
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.12) 0%,
+      rgba(255, 255, 255, 0.025) 34%,
+      rgba(255, 255, 255, 0) 56%,
+      rgba(0, 0, 0, 0.2) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -3px 10px -3px rgba(0, 0, 0, 0.22),
+    inset 0 0 26px rgba(255, 255, 255, 0.07),
+    var(--shadow-2);
+}
+
+/* 浮层的磨砂材质：与卡片同源，只是不叠外投影（浮层本身已有 --shadow-3）。
+   .n-card 的 ::after 在别处被 display:none 关过，这里显式恢复。 */
+[data-glass='frost'] .surface,
+[data-glass='frost'] .settings-modal,
+[data-glass='frost'] .n-modal.n-card,
+[data-glass='frost'] .n-modal .n-card,
+[data-glass='frost'] .n-modal-presets.n-card,
+[data-glass='frost'] .n-popover:not(.n-popover--plain),
+[data-glass='frost'] .n-dropdown-menu,
+[data-glass='frost'] .n-select-menu,
+[data-glass='frost'] .n-dialog {
+  position: relative;
+}
+
+[data-glass='frost'] .surface::after,
+[data-glass='frost'] .settings-modal::after,
+[data-glass='frost'] .n-modal.n-card::after,
+[data-glass='frost'] .n-modal .n-card::after,
+[data-glass='frost'] .n-modal-presets.n-card::after,
+[data-glass='frost'] .n-popover:not(.n-popover--plain)::after,
+[data-glass='frost'] .n-dropdown-menu::after,
+[data-glass='frost'] .n-select-menu::after,
+[data-glass='frost'] .n-dialog::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: block !important;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(255, 255, 255, 0.05) 38%,
+    rgba(255, 255, 255, 0) 58%,
+    color-mix(in srgb, #33507f 9%, transparent) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.52),
+    inset 0 -3px 12px -3px rgba(43, 66, 112, 0.16),
+    inset 0 0 34px rgba(56, 92, 160, 0.08);
+}
+
+[data-theme='dark'][data-glass='frost'] .surface::after,
+[data-theme='dark'][data-glass='frost'] .settings-modal::after,
+[data-theme='dark'][data-glass='frost'] .n-modal.n-card::after,
+[data-theme='dark'][data-glass='frost'] .n-modal .n-card::after,
+[data-theme='dark'][data-glass='frost'] .n-modal-presets.n-card::after,
+[data-theme='dark'][data-glass='frost'] .n-popover:not(.n-popover--plain)::after,
+[data-theme='dark'][data-glass='frost'] .n-dropdown-menu::after,
+[data-theme='dark'][data-glass='frost'] .n-select-menu::after,
+[data-theme='dark'][data-glass='frost'] .n-dialog::after {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.015) 38%,
+    rgba(255, 255, 255, 0) 58%,
+    rgba(0, 0, 0, 0.18) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    inset 0 -3px 12px -3px rgba(0, 0, 0, 0.2),
+    inset 0 0 30px rgba(255, 255, 255, 0.06);
+}
+
+/* 需要挡住后面内容的浮层（弹窗 / 二级菜单）用 --surface：
+   它随 UI 风格与卡片透明度换算（见上方令牌），backdrop-filter 由 --glass
+   提供（solid = none，frost / liquid = 毛玻璃）。 */
 .surface {
   border: 0;
   border-radius: var(--r-md);
   background: var(--surface);
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
 }
 
@@ -204,9 +502,8 @@ h3 {
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--text);
+  color: var(--wp-text);
   opacity: 0.82;
-  text-shadow: var(--hero-glow);
 }
 
 /* 无边框徽标：去线之后只保留色相底，高度压到 18px 让它像「注脚」 */
@@ -342,7 +639,6 @@ h3 {
 .n-checkbox .n-checkbox__box,
 .n-color-picker,
 .n-input-number,
-.n-tabs-segment .n-tab-pane,
 .n-pagination-bar {
   border-radius: var(--r-sm) !important;
 }
@@ -368,9 +664,20 @@ h3 {
   background: transparent !important;
 }
 
-.n-input--focus .n-input__state-border,
-.n-base-selection--active .n-base-selection__state-border,
-.n-base-selection--focus .n-base-selection__state-border {
+/* 输入框：聚焦即发光。文本框的 :focus-visible 在鼠标点击时也成立，
+   所以这里仍按 Naive 的 --focus 判定。 */
+.n-input--focus .n-input__state-border {
+  display: block !important;
+  border: 0 !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent) !important;
+  border-radius: var(--r-sm) !important;
+}
+
+/* 选择框：只在纯键盘聚焦时发光。
+   Naive 的 --focus / --active 在鼠标点一下时也会加上，于是选完选项、
+   鼠标移开后仍残留一圈蓝色；改用 :focus-visible 判定（只有 Tab / 方向键
+   这类键盘操作才匹配），鼠标点选不再留环，键盘可达性也不丢。 */
+.n-base-selection:has(:focus-visible) .n-base-selection__state-border {
   display: block !important;
   border: 0 !important;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent) !important;
@@ -385,20 +692,35 @@ h3 {
   background-color: var(--field) !important;
 }
 
+/* 取色控件：Naive 默认给内部色块留了 4px inset，看起来比下拉框小一圈；
+   去掉 1px 透明边框、让色块铺满整个控件后，与 NSelect 输入框同尺寸
+   （同样 28px 高、同样圆角）。 */
+.n-color-picker {
+  border: 0 !important;
+}
+
+.n-color-picker__fill {
+  inset: 0 !important;
+  border-radius: var(--r-sm) !important;
+  /* 色块是 fill 里一个 square 的绝对定位子 div，不裁切就会盖掉圆角 */
+  overflow: hidden !important;
+}
+
 .n-input--disabled,
 .n-base-selection--disabled {
   opacity: 0.42 !important;
 }
 
-/* 下拉菜单 / 弹出层：用 --surface 而不是 Naive 的实色面板 */
+/* 下拉菜单 / 弹出层 / 对话框：用 --surface 而不是 Naive 的实色面板；
+   --surface 随 UI 风格换算，所以二级菜单也会跟着扁平 / 毛玻璃 / 液态切换 */
 .n-popover:not(.n-popover--plain),
-.n-dropdown .n-dropdown-menu,
+.n-dropdown-menu,
 .n-select-menu,
-.n-card.n-popper {
+.n-card.n-popper,
+.n-dialog {
   background: var(--surface) !important;
   box-shadow: var(--shadow-3) !important;
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
 }
 
 .n-popover__content,
@@ -414,15 +736,14 @@ h3 {
 /* 弹窗：遮罩压得更狠一点，白玻璃浮层才立得住 */
 .n-modal-mask {
   background-color: rgba(6, 9, 14, 0.55) !important;
-  backdrop-filter: blur(6px);
 }
 
+.n-modal.n-card,
 .n-modal .n-card,
 .n-modal-presets.n-card {
   background: var(--surface) !important;
   box-shadow: var(--shadow-3) !important;
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
 }
 
 .n-card-header__main {
@@ -447,11 +768,6 @@ h3 {
 
 .n-form-item-label__text {
   font-weight: 500;
-}
-
-/* 分段式 tabs（图标选择器改用 segment，避免下划线） */
-.n-tabs-wrapper.n-tabs--segment-type .n-tabs-bar {
-  border-radius: var(--r-xs) !important;
 }
 
 /* 滑块：轨道用 --track，去描边 */
@@ -506,4 +822,28 @@ h3 {
 
 .n-button--primary-type {
   box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+/* 确认弹窗（useDeleteConfirm）：一段话 + 两个按钮，默认尺寸偏大，收紧内边距与字号 */
+.n-dialog.confirm-dialog {
+  padding: 16px 18px 14px;
+}
+
+.n-dialog.confirm-dialog .n-dialog__icon {
+  margin-right: 8px;
+  font-size: 20px;
+}
+
+.n-dialog.confirm-dialog .n-dialog__title {
+  font-size: 14px;
+}
+
+.n-dialog.confirm-dialog .n-dialog__content {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.n-dialog.confirm-dialog .n-dialog__action {
+  margin-top: 14px;
 }

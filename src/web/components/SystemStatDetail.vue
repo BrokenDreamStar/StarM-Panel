@@ -14,7 +14,6 @@
 import { computed } from 'vue'
 import { NModal } from 'naive-ui'
 import { useMonitorStore } from '@/stores/monitor'
-import { useSettingsStore } from '@/stores/settings'
 import { STAT_CARD_META, type StatCardRef } from '@/composables/useStatCards'
 import type { GpuMetric, GpuSnapshot, GpuStaticInfo } from '@shared/types'
 import {
@@ -41,7 +40,6 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const monitor = useMonitorStore()
-const settings = useSettingsStore()
 
 const open = computed({
   get: () => props.show,
@@ -49,7 +47,7 @@ const open = computed({
 })
 
 const kind = computed(() => props.card?.kind ?? 'system')
-const mount = computed(() => props.card?.mount ?? '')
+const device = computed(() => props.card?.device ?? '')
 const meta = computed(() => STAT_CARD_META[kind.value])
 
 // ── 数据源 ───────────────────────────────────────────────────
@@ -63,13 +61,17 @@ const mem = computed(() => snap.value?.mem ?? null)
 const sys = computed(() => snap.value?.system ?? null)
 
 const diskInfo = computed(
-  () => (snap.value?.disks ?? []).find((d) => d.mount === mount.value) ?? null,
+  () => (snap.value?.disks ?? []).find((d) => d.mount === device.value) ?? null,
 )
 const statDisk = computed(
-  () => (stat.value?.disks ?? []).find((d) => d.mount === mount.value) ?? null,
+  () => (stat.value?.disks ?? []).find((d) => d.mount === device.value) ?? null,
 )
 
-const netIfaces = computed(() => monitor.netFiltered(settings.monitorNetIfaces))
+/** 该卡对应的网卡；device 为空时（防御）回落到全部 */
+const netIfaces = computed(() => {
+  if (device.value) return (snap.value?.net ?? []).filter((n) => n.iface === device.value)
+  return snap.value?.net ?? []
+})
 function netStatic(iface: string) {
   return stat.value?.net.find((n) => n.iface === iface) ?? null
 }
@@ -109,7 +111,7 @@ interface GpuView {
   stat: GpuStaticInfo | null
 }
 
-const gpuViews = computed<GpuView[]>(() => {
+const gpuViewsAll = computed<GpuView[]>(() => {
   const snaps = snap.value?.gpus ?? []
   const staticGpus = stat.value?.gpus ?? []
   if (snaps.length > 0) {
@@ -131,6 +133,13 @@ const gpuViews = computed<GpuView[]>(() => {
     snap: null,
     stat: g,
   }))
+})
+
+/** 该卡对应的 GPU（device = 设备序号）；device 为空时（防御）列出全部 */
+const gpuViews = computed<GpuView[]>(() => {
+  const list = gpuViewsAll.value
+  if (!device.value) return list
+  return list.filter((g) => String(g.index) === device.value)
 })
 
 const GPU_METRIC_LABELS: Record<GpuMetric, string> = {
@@ -165,7 +174,9 @@ function gpuMetrics(gpu: GpuView): MetricRow[] {
         const value =
           s.memoryUsed !== null && s.memoryTotal !== null
             ? fmtBytesPair(s.memoryUsed, s.memoryTotal)
-            : pct(s.memoryUtilization)
+            : s.memoryUsed !== null
+              ? fmtBytes(s.memoryUsed)
+              : pct(s.memoryUtilization)
         out.push({ key, label: GPU_METRIC_LABELS[key], value, ratio: s.memoryUtilization })
         break
       }
@@ -210,13 +221,16 @@ function gpuVram(gpu: GpuView): string {
   if (typeof vram === 'number') {
     return `${fmtBytes(vram)}${gpu.stat?.vramDynamic ? '（与内存共享）' : ''}`
   }
+  // Apple Silicon：有已用、无上限，显式说明是共享内存
+  const used = gpu.snap?.memoryUsed
+  if (typeof used === 'number') return `${fmtBytes(used)}（已用，与内存共享）`
   return '未知'
 }
 
 // ── 文案 ─────────────────────────────────────────────────────
 
 const title = computed(() =>
-  kind.value === 'disk' ? `磁盘 ${mount.value}` : `${meta.value.title}详情`,
+  kind.value === 'disk' ? `磁盘 ${device.value}` : `${meta.value.title}详情`,
 )
 
 const subtitle = computed(() => {
@@ -228,9 +242,9 @@ const subtitle = computed(() => {
     case 'disk':
       return diskInfo.value?.type || statDisk.value?.type || '磁盘使用情况'
     case 'network':
-      return `${netIfaces.value.length} 个网卡`
+      return device.value || `${netIfaces.value.length} 个网卡`
     case 'gpu':
-      return `${gpuViews.value.length} 个 GPU 设备`
+      return gpuViews.value[0]?.model || `${gpuViews.value.length} 个 GPU 设备`
     default:
       return stat.value
         ? `${stat.value.os.distro || stat.value.os.platform} · ${stat.value.os.hostname}`
@@ -250,17 +264,17 @@ const infoRows = computed<InfoRow[]>(() => {
       return [
         { label: '型号', value: s?.brand || '—' },
         { label: '厂商', value: s?.manufacturer || '—' },
-        { label: '核心', value: s ? `${s.physicalCores} 物理 / ${s.cores} 逻辑` : '—' },
-        { label: '标称主频', value: s ? fmtGhz(s.speed) : '—' },
+        { label: '核心/线程', value: s ? `${s.physicalCores} 核心 / ${s.cores} 线程` : '—' },
+        { label: '主频', value: s ? fmtGhz(s.speed) : '—' },
       ]
     }
     case 'memory': {
       return [
-        // 说明：/api/system/info 目前没有内存字段，总量只能来自实时快照
-        { label: '总内存（实时快照）', value: fmtBytes(mem.value?.total) },
+        // 说明：/api/system/info 目前没有内存字段，总量只能来自实时采样数据
+        { label: '总内存', value: fmtBytes(mem.value?.total) },
         { label: '空闲', value: fmtBytes(mem.value?.free) },
         { label: '可用', value: fmtBytes(mem.value?.available) },
-        { label: '交换分区', value: fmtBytesPair(mem.value?.swapUsed, mem.value?.swapTotal) },
+        { label: 'SWAP', value: fmtBytesPair(mem.value?.swapUsed, mem.value?.swapTotal) },
       ]
     }
     case 'disk': {
@@ -268,7 +282,7 @@ const infoRows = computed<InfoRow[]>(() => {
       const s = statDisk.value
       const total = d?.total ?? s?.size ?? null
       return [
-        { label: '挂载点', value: mount.value || '—' },
+        { label: '挂载点', value: device.value || '—' },
         { label: '文件系统', value: d?.type || s?.type || '—' },
         { label: '设备', value: d?.fs || s?.fs || '—' },
         { label: '总容量', value: fmtBytes(total) },
@@ -289,7 +303,7 @@ const infoRows = computed<InfoRow[]>(() => {
         { label: '进程数', value: sys.value ? String(sys.value.processes) : '—' },
         { label: '用户数', value: sys.value ? String(sys.value.users) : '—' },
         { label: 'CPU 型号', value: s?.cpu.brand || '—' },
-        { label: '内存总量（实时快照）', value: fmtBytes(mem.value?.total) },
+        { label: '内存总量', value: fmtBytes(mem.value?.total) },
       ]
     }
     default:
@@ -416,7 +430,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
         </div>
 
         <template v-if="(mem?.swapTotal ?? 0) > 0">
-          <h4 class="sub-title">交换分区</h4>
+          <h4 class="sub-title">SWAP</h4>
           <div class="metric">
             <div class="metric-row">
               <span class="metric-label">{{ fmtBytesPair(mem?.swapUsed, mem?.swapTotal) }}</span>
@@ -445,7 +459,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
       <template v-else-if="kind === 'disk'">
         <div class="metric">
           <div class="metric-row">
-            <span class="metric-label">{{ mount }}</span>
+            <span class="metric-label">{{ device }}</span>
             <span class="metric-value mono">
               {{ diskInfo ? pct(ratioPct(diskInfo.used, diskInfo.total)) : '—' }}
             </span>
@@ -469,16 +483,11 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
             <span class="mono">{{ row.value }}</span>
           </div>
         </div>
-
-        <p class="dim tiny">
-          读写速率来自 /proc/diskstats 的累计计数差分；macOS / Windows 不提供该数据源，
-          因此恒显示「—」而不是 0 B/s。
-        </p>
       </template>
 
       <!-- ── 网络 ───────────────────────────────────────────── -->
       <template v-else-if="kind === 'network'">
-        <p v-if="netIfaces.length === 0" class="dim">没有可显示的网卡（检查 monitor.netIfaces 设置）。</p>
+        <p v-if="netIfaces.length === 0" class="dim">没有可显示的网卡。</p>
         <div v-for="n in netIfaces" :key="n.iface" class="iface">
           <div class="metric-row">
             <span class="iface-name mono">{{ n.iface }}</span>

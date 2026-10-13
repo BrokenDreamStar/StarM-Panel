@@ -11,7 +11,6 @@
  */
 import { computed } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
-import { useSettingsStore } from '@/stores/settings'
 import type { MonitorCardKind } from '@/api/settings'
 import {
   barLevel,
@@ -26,49 +25,89 @@ import {
 import { STAT_CARD_META } from '@/composables/useStatCards'
 import FaviconGlyph from './FaviconGlyph.vue'
 
-const props = defineProps<{
-  kind: MonitorCardKind
-  /** 仅 disk 卡：该卡对应的挂载点 */
-  mount?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    kind: MonitorCardKind
+    /** 该卡对应的设备：disk=挂载点 / network=网卡名 / gpu=设备序号；整机类为空 */
+    device?: string
+    /** 与 ui.cardSize 设置对应，和 App 卡片共用同一套尺寸 */
+    size?: 'sm' | 'md' | 'lg'
+    /** 移除按钮的 tooltip 文案 */
+    removeTitle?: string
+    /** 编辑模式：为 true 时才渲染右上角移除角标 */
+    editing?: boolean
+  }>(),
+  { size: 'md' },
+)
 
-const emit = defineEmits<{ (e: 'open'): void }>()
+/** 图标随卡片尺寸缩放，和 ItemCard 的图标尺寸策略一致 */
+const iconSize = computed(() => (props.size === 'sm' ? 14 : props.size === 'lg' ? 20 : 18))
+
+const emit = defineEmits<{ (e: 'open'): void; (e: 'remove'): void }>()
+
+/** 只在卡片自身聚焦时响应回车/空格，避免移除按钮上的按键冒泡触发详情 */
+function onActivate(event: KeyboardEvent): void {
+  if (event.target !== event.currentTarget) return
+  event.preventDefault()
+  emit('open')
+}
 
 const monitor = useMonitorStore()
-const settings = useSettingsStore()
 
 const meta = computed(() => STAT_CARD_META[props.kind])
 const snap = computed(() => monitor.latest)
 
 const disk = computed(() =>
-  props.kind === 'disk' && props.mount
-    ? ((snap.value?.disks ?? []).find((d) => d.mount === props.mount) ?? null)
+  props.kind === 'disk' && props.device
+    ? ((snap.value?.disks ?? []).find((d) => d.mount === props.device) ?? null)
     : null,
 )
 const diskStatic = computed(() =>
-  props.kind === 'disk' && props.mount
-    ? ((monitor.staticInfo?.disks ?? []).find((d) => d.mount === props.mount) ?? null)
+  props.kind === 'disk' && props.device
+    ? ((monitor.staticInfo?.disks ?? []).find((d) => d.mount === props.device) ?? null)
     : null,
 )
 
-const netIfaces = computed(() => monitor.netFiltered(settings.monitorNetIfaces))
-const totalRx = computed(() => netIfaces.value.reduce((sum, n) => sum + n.rxBps, 0))
-const totalTx = computed(() => netIfaces.value.reduce((sum, n) => sum + n.txBps, 0))
-const netFlow = computed(() => totalRx.value + totalTx.value)
+/** 该卡对应的网卡（一张卡一台设备） */
+const netIface = computed(() =>
+  props.kind === 'network' && props.device
+    ? ((snap.value?.net ?? []).find((n) => n.iface === props.device) ?? null)
+    : null,
+)
+const netFlow = computed(() =>
+  netIface.value ? netIface.value.rxBps + netIface.value.txBps : 0,
+)
 const rxShare = computed(() =>
-  netFlow.value > 0 ? (totalRx.value / netFlow.value) * 100 : 0,
+  netFlow.value > 0 ? ((netIface.value?.rxBps ?? 0) / netFlow.value) * 100 : 0,
 )
 const txShare = computed(() =>
-  netFlow.value > 0 ? (totalTx.value / netFlow.value) * 100 : 0,
+  netFlow.value > 0 ? ((netIface.value?.txBps ?? 0) / netFlow.value) * 100 : 0,
 )
 
-// ── GPU：只有一个设备时它的指标就是这张卡的值 ──────────────────
+/** 上下行单位相同时只写一个（"↓34.2 ↑72.2 KB/s"），窄卡片里放得下 */
+const netValue = computed<string>(() => {
+  const n = netIface.value
+  if (!n) return '—'
+  const rx = fmtRate(n.rxBps)
+  const tx = fmtRate(n.txBps)
+  const [rn, ru] = rx.split(' ')
+  const [tn, tu] = tx.split(' ')
+  if (rn && tn && ru && ru === tu) return `↓${rn} ↑${tn} ${ru}`
+  return `↓ ${rx} ↑ ${tx}`
+})
 
-const gpuSnap = computed(() => snap.value?.gpus[0] ?? null)
-const gpuStatic = computed(() => monitor.staticInfo?.gpus[0] ?? null)
-const gpuCount = computed(
-  () => snap.value?.gpus.length ?? monitor.staticInfo?.gpus.length ?? 0,
-)
+// ── GPU：这张卡对应一台设备 ─────────────────────────────────
+
+const gpuSnap = computed(() => {
+  const list = snap.value?.gpus ?? []
+  if (props.device === undefined) return list[0] ?? null
+  return list.find((g) => String(g.index) === props.device) ?? null
+})
+const gpuStatic = computed(() => {
+  const list = monitor.staticInfo?.gpus ?? []
+  if (props.device === undefined) return list[0] ?? null
+  return list.find((g) => String(g.index) === props.device) ?? null
+})
 
 const gpuRatio = computed<number | null>(() => {
   const g = gpuSnap.value
@@ -86,6 +125,8 @@ const gpuValue = computed(() => {
       if (g.memoryUsed !== null && g.memoryTotal !== null) {
         return fmtBytesPair(g.memoryUsed, g.memoryTotal)
       }
+      // Apple Silicon：显存与内存共享，没有固定上限，只能显示已用
+      if (g.memoryUsed !== null) return fmtBytes(g.memoryUsed)
       if (g.memoryUtilization !== null) return pct(g.memoryUtilization)
     }
   }
@@ -96,9 +137,16 @@ const gpuValue = computed(() => {
 // ── 卡片文案 ─────────────────────────────────────────────────
 
 const label = computed(() => {
-  if (props.kind === 'disk') return props.mount ?? '/'
-  if (props.kind === 'gpu' && gpuCount.value > 1) return `${meta.value.label} ×${gpuCount.value}`
-  return meta.value.label
+  switch (props.kind) {
+    case 'disk':
+      return props.device ?? '/'
+    case 'network':
+      return props.device ?? meta.value.label
+    case 'gpu':
+      return props.device === undefined ? meta.value.label : `GPU #${props.device}`
+    default:
+      return meta.value.label
+  }
 })
 
 const value = computed<string>(() => {
@@ -114,7 +162,7 @@ const value = computed<string>(() => {
       return '—'
     }
     case 'network':
-      return `↓ ${fmtRate(totalRx.value)} ↑ ${fmtRate(totalTx.value)}`
+      return netValue.value
     case 'gpu':
       return gpuValue.value
     case 'system':
@@ -141,20 +189,37 @@ const ratio = computed<number | null>(() => {
 </script>
 
 <template>
-  <button
+  <div
     class="stat-card"
+    :class="`size-${size}`"
     data-glass-card
-    type="button"
+    role="button"
+    tabindex="0"
     :aria-label="`${meta.title}：${label} ${value}`"
     :title="`查看${meta.title}详情`"
     @click="emit('open')"
+    @keydown.enter="onActivate"
+    @keydown.space="onActivate"
   >
-    <span class="stat-icon"><FaviconGlyph :name="meta.icon" :size="18" /></span>
+    <button
+      v-if="editing"
+      class="stat-remove"
+      type="button"
+      :title="removeTitle ?? '移除卡片'"
+      aria-label="移除卡片"
+      @click.stop="emit('remove')"
+    >
+      <FaviconGlyph name="close" :size="12" />
+    </button>
+
+    <span class="stat-icon"><FaviconGlyph :name="meta.icon" :size="iconSize" /></span>
 
     <span class="stat-body">
       <span class="stat-row">
         <span class="stat-label">{{ label }}</span>
-        <span class="stat-value mono" :class="{ compact: kind === 'network' }">{{ value }}</span>
+        <span class="stat-value mono" :class="{ compact: kind === 'network' }">
+          {{ kind === 'network' ? netValue : value }}
+        </span>
       </span>
 
       <!-- 网络没有「占用率」语义：用下行/上行占比的分段条代替 -->
@@ -166,39 +231,110 @@ const ratio = computed<number | null>(() => {
         <i class="fill" :class="barLevel(ratio)" :style="{ width: `${clampPct(ratio)}%` }" />
       </span>
     </span>
-  </button>
+  </div>
 </template>
 
 <style scoped>
 /* 与 App 卡片同一张白玻璃，区别只在内容密度：数值靠右、下面一条 4px 轨道 */
 .stat-card {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  min-height: 68px;
-  padding: 12px 15px;
+  height: 70px;
+  padding: 12px 13px;
   font: inherit;
   text-align: left;
   color: var(--text);
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   background: var(--card-bg);
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-1);
   cursor: pointer;
-  transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
 }
 
+/* hover 只高亮不位移：与 App 卡片保持一致，避免卡片在鼠标下跳动 */
 .stat-card:hover {
-  transform: translateY(-1px);
   background: var(--card-bg-hi);
   box-shadow: var(--shadow-2);
 }
 
 .stat-card:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent), var(--shadow-2);
+}
+
+/* 紧凑档：列宽被压到 150px，横向放不下「标签 + 数值」，
+   改成上面标签、下面数值的堆叠版式，数值独占整行宽度，不再被截断 */
+.size-sm {
+  height: 58px;
+  padding: 8px 11px;
+  gap: 6px;
+}
+
+.size-sm .stat-body {
+  gap: 5px;
+}
+
+.size-sm .stat-row {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0;
+}
+
+.size-sm .stat-label {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.size-sm .stat-value {
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.size-sm .stat-value.compact {
+  font-size: 11px;
+}
+
+.size-lg {
+  height: 86px;
+  padding: 15px 15px;
+  gap: 12px;
+}
+
+.size-lg .stat-value {
+  font-size: 15px;
+}
+
+/* 移除角标：仅在编辑模式渲染，悬出卡片右上角，避免压住数值 */
+.stat-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-2);
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.stat-remove:hover,
+.stat-remove:focus-visible {
+  background: var(--err);
+  color: #fff;
 }
 
 .stat-icon {
@@ -220,7 +356,7 @@ const ratio = computed<number | null>(() => {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .stat-label {
@@ -233,14 +369,17 @@ const ratio = computed<number | null>(() => {
 }
 
 .stat-value {
-  font-size: 15px;
+  min-width: 0;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat-value.compact {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 550;
 }
 

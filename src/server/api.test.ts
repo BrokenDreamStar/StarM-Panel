@@ -316,42 +316,6 @@ describe('bootstrap 聚合', () => {
   })
 })
 
-describe('探测接口', () => {
-  test('status 返回对象（初始可能为空）', async () => {
-    const { status, data } = await send('GET', '/api/probe/status')
-    expect(status).toBe(200)
-    expect(typeof data).toBe('object')
-  })
-
-  test('公网地址被 SSRF 白名单拒绝', async () => {
-    const { status, data } = await send('POST', '/api/probe/check', {
-      url: 'http://8.8.8.8',
-    })
-    expect(status).toBe(200)
-    expect(data.reachable).toBeNull()
-    expect(data.reason).toBe('blocked')
-  })
-
-  test('非法地址返回 no-url 而非报错', async () => {
-    const { status, data } = await send('POST', '/api/probe/check', { url: 'not a url' })
-    expect(status).toBe(200)
-    expect(data.reachable).toBeNull()
-    expect(data.reason).toBe('no-url')
-  })
-
-  test('探测本机监听端口返回可达', async () => {
-    const tmp = Bun.serve({ port: 0, fetch: () => new Response('x') })
-    try {
-      const { data } = await send('POST', '/api/probe/check', {
-        url: `http://127.0.0.1:${tmp.port}`,
-      })
-      expect(data.reachable).toBe(true)
-    } finally {
-      await tmp.stop(true)
-    }
-  })
-})
-
 describe('资源上传', () => {
   const PNG_1X1 = Uint8Array.from(
     atob(

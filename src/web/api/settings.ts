@@ -20,39 +20,78 @@ export function isMonitorCardKind(value: unknown): value is MonitorCardKind {
   return typeof value === 'string' && (MONITOR_CARD_KINDS as readonly string[]).includes(value)
 }
 
+/**
+ * 需要绑定到**具体设备**的卡片类型：磁盘按挂载点、网络按网卡、GPU 按设备序号。
+ * 其余类型（cpu / memory / system）整机唯一，没有设备维度。
+ */
+export const DEVICE_CARD_KINDS = ['disk', 'network', 'gpu'] as const
+
+export type DeviceCardKind = (typeof DEVICE_CARD_KINDS)[number]
+
+export function isDeviceCardKind(value: unknown): value is DeviceCardKind {
+  return typeof value === 'string' && (DEVICE_CARD_KINDS as readonly string[]).includes(value)
+}
+
+/**
+ * 一条卡片记录。`monitor.cards` 是它的数组，数组顺序 = 展示顺序。
+ *
+ * `device` 仅在 DEVICE_CARD_KINDS 上有意义：
+ *   - disk = 挂载点，network = 网卡名，gpu = 设备序号（字符串）
+ *   - cpu / memory / system 恒为 undefined
+ *
+ * 为了兼容旧版把 `monitor.cards` 存成 `['cpu', ...]` 的纯字符串数组，
+ * **device 缺省 = 「自动」条目**：按当前检测到的设备展开成多张卡片。
+ * 用户在「添加卡片」里选中的具体设备则写成显式条目。
+ */
+export interface MonitorCardEntry {
+  kind: MonitorCardKind
+  device?: string
+}
+
+/** 卡片记录的唯一标识（kind + 设备），用于去重 / 拖拽 / v-for key */
+export function cardEntryId(entry: MonitorCardEntry): string {
+  return `${entry.kind}:${entry.device ?? ''}`
+}
+
 export const SETTINGS_DEFAULTS = {
   'network.mode': 'lan' as NetworkMode,
-  'network.autoProbe': true,
-  'network.probeInterval': 30_000,
-  'network.probeTimeout': 800,
+  'network.autoMode': false,
 
   'theme.mode': 'system' as 'light' | 'dark' | 'system',
   'theme.accent': '#6366f1',
-  'theme.blur': 12,
-  'wallpaper.type': 'gradient' as 'none' | 'solid' | 'gradient' | 'asset' | 'bing',
+  'wallpaper.type': 'gradient' as 'solid' | 'gradient' | 'asset' | 'bing',
   'wallpaper.value': null as string | null,
 
   'search.defaultEngine': 'bing',
 
   'monitor.interval': 1000,
   'monitor.hiddenInterval': 10_000,
-  'monitor.gpuEnabled': true,
   'monitor.gpuInterval': 3000,
-  'monitor.disks': [] as string[],
-  'monitor.netIfaces': [] as string[],
-  /** 首页「系统状态」区展示哪些卡片，数组顺序 = 展示顺序 */
-  'monitor.cards': [...MONITOR_CARD_KINDS] as string[],
+  /**
+   * 首页「系统状态」区展示哪些卡片，数组顺序 = 展示顺序（由首页增删 / 拖拽写入）。
+   * 字符串写法 = 兼容旧值；新值一律是 `{ kind, device }`（见 MonitorCardEntry）。
+   */
+  'monitor.cards': [...MONITOR_CARD_KINDS] as Array<MonitorCardKind | MonitorCardEntry>,
 
   'auth.enabled': false,
 
   'ui.showMonitor': true,
   'ui.cardSize': 'md' as 'sm' | 'md' | 'lg',
-  /** 卡片玻璃风格：frost = 毛玻璃（默认），liquid = 液态玻璃（SVG 位移折射，仅 Chromium 完整生效） */
-  'ui.glassStyle': 'frost' as 'frost' | 'liquid',
-  /** 液态玻璃下的卡片底色不透明度（%）；0 = 跟随主题默认 */
-  'ui.glassOpacity': 0,
-  /** 液态玻璃折射强度（feDisplacementMap scale） */
-  'ui.glassScale': 64,
+  /** 卡片风格：solid = 扁平化（默认），frost = 毛玻璃，liquid = 液态玻璃 */
+  'ui.glassStyle': 'solid' as 'frost' | 'solid' | 'liquid',
+  'ui.wallpaperText': 'auto' as 'auto' | 'light' | 'dark',
+  /**
+   * 卡片底色透明度（%），每种 UI 风格独立配置：0 = 完全不透明，100 = 完全透明。
+   * 字面值，没有「0 = 跟随风格默认」的哨兵（哨兵会让滑杆 0→1 跨完整个区间）。
+   */
+  'ui.solidTransparency': 10,
+  'ui.frostTransparency': 20,
+  'ui.liquidTransparency': 85,
+  /** 模糊半径（px）按风格独立，0 = 不模糊 */
+  'ui.frostBlur': 12,
+  'ui.liquidBlur': 12,
+  /** 液态玻璃折射强度（feDisplacementMap scale，demo 调校基准 72） */
+  'ui.glassScale': 72,
   /** 液态玻璃边缘色散（RGB 三通道分离）；逐像素三份开销，默认关 */
   'ui.glassChroma': false,
   /** 首页标题旁是否显示时钟与日期 */
@@ -111,15 +150,32 @@ export function readEnum<K extends SettingsKey>(
 }
 
 /**
- * 读取 `monitor.cards`：剔除未知取值并去重。
- * 渲染层拿到的一定是合法 kind，不需要再防御。
+ * 读取 `monitor.cards`：统一成 `MonitorCardEntry[]`，剔除未知取值并按 id 去重。
+ * 兼容三种脏数据：旧版纯字符串、缺 device 的对象、非法 kind。
  */
 export function readMonitorCards(
   raw: Record<string, unknown> | null | undefined,
-): MonitorCardKind[] {
-  const out: MonitorCardKind[] = []
-  for (const value of readSetting(raw, 'monitor.cards')) {
-    if (isMonitorCardKind(value) && !out.includes(value)) out.push(value)
+): MonitorCardEntry[] {
+  const rawList = readSetting(raw, 'monitor.cards') as unknown[]
+  const out: MonitorCardEntry[] = []
+  const seen = new Set<string>()
+  for (const value of rawList) {
+    const entry = parseCardEntry(value)
+    if (!entry) continue
+    const id = cardEntryId(entry)
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push(entry)
   }
   return out
+}
+
+/** 单个条目解析：字符串 = 自动条目，对象 = 显式设备条目（device 非法时回落成自动） */
+function parseCardEntry(value: unknown): MonitorCardEntry | null {
+  if (isMonitorCardKind(value)) return { kind: value }
+  if (!value || typeof value !== 'object') return null
+  const rec = value as Record<string, unknown>
+  if (!isMonitorCardKind(rec.kind)) return null
+  const device = typeof rec.device === 'string' && rec.device.length > 0 ? rec.device : undefined
+  return device ? { kind: rec.kind, device } : { kind: rec.kind }
 }

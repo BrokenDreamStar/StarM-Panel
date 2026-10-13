@@ -17,7 +17,6 @@ import {
   ItemUpdateSchema,
 } from '@shared/schemas'
 import { HttpError } from '../middleware/error'
-import { probe } from '../services/probe'
 
 export const itemRoutes = new Hono()
 
@@ -99,9 +98,6 @@ itemRoutes
       .returning()
       .get()
 
-    // 立即探测一次内网地址，不必等下一轮全量调度
-    void probe.refreshOne(row.id)
-
     return c.json(toItem(row), 201)
   })
 
@@ -147,9 +143,6 @@ itemRoutes
       .returning()
       .get()
 
-    // 地址或偏好可能变了，重探该卡片
-    void probe.refreshOne(id)
-
     return c.json(toItem(row))
   })
 
@@ -157,8 +150,6 @@ itemRoutes
     const id = parseId(c.req.param('id'))
     const row = db.delete(items).where(eq(items.id, id)).returning().get()
     if (!row) throw new HttpError(404, 'NOT_FOUND', `卡片 ${id} 不存在`)
-    // 卡片已删除 —— refreshOne 查不到记录时会顺手清掉探测缓存
-    void probe.refreshOne(id)
     return c.body(null, 204)
   })
 

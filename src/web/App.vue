@@ -5,7 +5,7 @@
  * 职责：
  *   1. 首屏 bootstrap（一次请求拿全 groups / items / settings / version）
  *   2. Naive UI 主题同步 —— 深色模式下必须传 darkTheme，否则控件是白底
- *   3. CSS 变量（--accent / --blur）+ <html data-theme> 的落地
+ *   3. CSS 变量（--accent）+ <html data-theme> 的落地
  *   4. 壁纸层、监控 SSE 数据流、全局消息宿主
  *
  * 首页布局不再有常驻顶栏与监控侧栏：硬件信息在 HomeView 里以卡片形式
@@ -101,7 +101,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
   Scrollbar: { width: '7px', borderRadius: '4px', color: 'rgba(128,138,155,.32)' },
 }))
 
-/** 壁纸层样式；type=none 时不渲染该层 */
+/** 壁纸层样式 */
 const wallpaperStyle = computed(() => {
   const type = settings.wallpaperType
   const value = typeof settings.wallpaperValue === 'string' ? settings.wallpaperValue : ''
@@ -114,8 +114,8 @@ const wallpaperStyle = computed(() => {
       if (value) style.backgroundImage = `url("${value}")`
       break
     case 'bing':
-      // ⚠️ Bing 每日图需要外网；纯内网部署请使用渐变 / 纯色 / 本地图片
-      style.backgroundImage = 'url("https://bing.img.run/1920x1080.php")'
+      // 由服务端代理 Bing 官方接口，避免依赖不稳定的第三方中转
+      style.backgroundImage = 'url("/api/wallpaper/bing")'
       break
     default:
       break
@@ -123,20 +123,24 @@ const wallpaperStyle = computed(() => {
   return style
 })
 
-const showWallpaper = computed(() => settings.wallpaperType !== 'none')
-
 function applyDocumentTheme(): void {
   const root = document.documentElement
   root.dataset.theme = isDark.value ? 'dark' : 'light'
   root.style.setProperty('--accent', settings.accent)
-  root.style.setProperty('--blur', `${settings.blur}px`)
+  // 壁纸直排文字颜色：auto 时不带 data-wpt，交回主题
+  if (settings.wallpaperText === 'auto') root.removeAttribute('data-wpt')
+  else root.dataset.wpt = settings.wallpaperText
   // 让滚动条等原生控件也跟随主题
   root.style.colorScheme = isDark.value ? 'dark' : 'light'
 }
 
-watch([isDark, () => settings.accent, () => settings.blur], applyDocumentTheme, {
-  immediate: true,
-})
+watch(
+  [isDark, () => settings.accent, () => settings.wallpaperText],
+  applyDocumentTheme,
+  {
+    immediate: true,
+  },
+)
 
 // ── 首屏 ─────────────────────────────────────────────────────
 
@@ -147,10 +151,6 @@ async function bootstrap(): Promise<void> {
     settings.hydrate(payload.settings)
     // 启动顺序：localStorage 先渲染 → 服务端值覆盖（不一致时以服务端为准）
     network.syncFromServer(payload.settings['network.mode'])
-    network.startProbing({
-      enabled: settings.get('network.autoProbe'),
-      intervalMs: settings.get('network.probeInterval'),
-    })
     await monitor.loadStaticInfo()
     bootError.value = null
   } catch (e) {
@@ -176,15 +176,15 @@ useGlassTheme()
     :theme-overrides="themeOverrides"
     :locale="zhCN"
     :date-locale="dateZhCN"
+    class="app-frame"
   >
     <NGlobalStyle />
     <NMessageProvider :max="3" placement="bottom-right">
       <NDialogProvider>
         <NNotificationProvider :max="3">
           <div class="app-shell">
-            <!-- 壁纸层（铺满 + 高斯模糊，卡片用 backdrop-filter 浮在上面） -->
+            <!-- 壁纸层只负责铺底；模糊只属于卡片，壁纸本身永远清晰 -->
             <div
-              v-if="showWallpaper"
               class="wallpaper"
               :class="`wp-${settings.wallpaperType}`"
               :style="wallpaperStyle"
@@ -204,6 +204,13 @@ useGlassTheme()
 </template>
 
 <style scoped>
+/* NConfigProvider 会渲染一层自己的 wrapper div；它没有高度的话，
+   下层 app-shell → main-pane → 页面的整条 height:100% 链全部失效，
+   长内容只会被 body 的 overflow:hidden 裁掉、哪里都滚不到。 */
+.app-frame {
+  height: 100%;
+}
+
 .app-shell {
   position: relative;
   display: flex;
@@ -214,13 +221,11 @@ useGlassTheme()
 
 .wallpaper {
   position: fixed;
-  /* 往外扩一圈：filter: blur 会把边缘糊掉，inset:0 时四边会露出底色 */
-  inset: -28px;
+  inset: 0;
   z-index: 0;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  filter: blur(var(--wallpaper-blur, 12px));
   pointer-events: none;
 }
 
@@ -232,20 +237,6 @@ useGlassTheme()
     radial-gradient(900px 520px at 88% 4%, var(--wp-2), transparent 60%),
     radial-gradient(760px 520px at 50% 106%, var(--wp-3), transparent 62%),
     radial-gradient(800px 560px at 96% 102%, var(--wp-4), transparent 64%);
-}
-
-/* 照片类壁纸：模糊更重，并压一层底色保证卡片文字可读 */
-.wp-asset,
-.wp-bing {
-  --wallpaper-blur: 18px;
-}
-
-.wp-asset::after,
-.wp-bing::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 .pane {

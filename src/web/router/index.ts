@@ -7,12 +7,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/HomeView.vue'),
     meta: { title: '桌面' },
   },
-  {
-    path: '/settings',
-    name: 'settings',
-    component: () => import('@/views/SettingsView.vue'),
-    meta: { title: '设置' },
-  },
+  // 设置不再是一条路由：首页右上角齿轮直接开弹窗（components/SettingsModal.vue）。
+  // 旧 /settings 书签由下方 catch-all 兜底转回首页。
   // 旧版把硬件监控做成右侧侧栏，/monitor 曾用于直接展开它。
   // 侧栏已按 §10.6 改为首页的「系统状态」卡片区，这里只保留一个转发，
   // 让旧书签不至于 404。不要再往 query 里塞 HomeView 不读的参数。

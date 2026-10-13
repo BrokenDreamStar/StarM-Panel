@@ -1,109 +1,70 @@
 <script setup lang="ts">
 /**
- * 右上角浮动控制组 —— 顶部常驻大工具栏的替代品。
+ * 右上角浮动控制组 —— 三个等高控件：内外网切换、主题切换、设置。
  *
- * 一颗白玻璃胶囊：无边框，默认 68% 不透明度，hover / 键盘聚焦时才完全明显，
- * 视觉上不抢英雄区的注意力。内部分组之间用留白隔开，不再画竖线。
+ * 一颗白玻璃胶囊：无边框、整体不做透明度与 hover 变化，材质始终与其它卡片一致。
+ * hover 反馈只发生在三个按钮自身（图标按钮抬亮、主题开关转动太阳/月亮）。
+ * 内部分组之间用留白隔开，不再画竖线。
  *
- * 收纳：搜索（点击展开输入框）、内外网切换（复用 NetworkSwitch）、主题切换、设置。
- * 搜索框焦点由父组件的 `/` 快捷键通过 defineExpose 的 openSearch 触发。
+ * 两侧图标按钮默认透明，只在 hover / 键盘聚焦 / 按下时才浮出一层底色；
+ * 这样静止时三颗控件都只有图标（开关是它自己的天空胶囊），反馈统一发生在交互时。
+ *
+ * 内外网切换是单颗图标按钮：图标显示当前模式（home=内网 / globe=外网），
+ * 点击二态切换；开启「自动选择」时按钮按落地结果显示图标，点击则接管为手动。
  */
-import { computed, nextTick, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { NInput } from 'naive-ui'
+import { computed } from 'vue'
 import { useNetworkStore } from '@/stores/network'
 import FaviconGlyph from './FaviconGlyph.vue'
-import NetworkSwitch from './NetworkSwitch.vue'
 import ThemeSwitch from './ThemeSwitch.vue'
 
-const props = defineProps<{ query: string }>()
-const emit = defineEmits<{ (e: 'update:query', value: string): void }>()
+const emit = defineEmits<{ (e: 'open-settings'): void }>()
 
-const router = useRouter()
 const network = useNetworkStore()
 
-const searchOpen = ref(false)
-const searchInput = ref<InstanceType<typeof NInput> | null>(null)
-
-async function openSearch(): Promise<void> {
-  searchOpen.value = true
-  await nextTick()
-  searchInput.value?.focus()
-}
-
-function closeSearch(): void {
-  searchOpen.value = false
-}
-
-/** 失焦时只在没有输入内容的情况下收起，避免把用户刚打的字藏起来 */
-function onSearchBlur(): void {
-  if (props.query.trim() === '') searchOpen.value = false
-}
-
-function onQuery(value: string): void {
-  emit('update:query', value)
-}
+const netIcon = computed(() => (network.effectiveMode === 'lan' ? 'home' : 'globe'))
 
 const netTitle = computed(() => {
-  switch (network.mode) {
-    case 'lan':
-      return '内网优先'
-    case 'wan':
-      return '外网优先'
-    default:
-      return '自动探测'
+  const lan = network.effectiveMode === 'lan'
+  if (network.autoMode) {
+    return `网络模式：自动（当前按${lan ? '内网' : '外网'}解析，点击改为手动切换）`
   }
+  return lan ? '网络模式：内网（点击切换到外网）' : '网络模式：外网（点击切换到内网）'
 })
 
-defineExpose({ openSearch })
+const netLabel = computed(() =>
+  network.effectiveMode === 'lan'
+    ? '网络模式：内网，点击切换到外网'
+    : '网络模式：外网，点击切换到内网',
+)
 </script>
 
 <template>
   <div class="float-controls">
     <div class="group">
-      <NInput
-        v-if="searchOpen"
-        ref="searchInput"
-        class="search-input"
-        size="small"
-        :value="query"
-        clearable
-        placeholder="搜索卡片…"
-        @update:value="onQuery"
-        @blur="onSearchBlur"
-        @keydown.esc="closeSearch"
-      >
-        <template #prefix>
-          <FaviconGlyph name="search" :size="13" class="dim" />
-        </template>
-      </NInput>
       <button
-        v-else
         class="ctl"
         type="button"
-        title="搜索卡片（按 / 聚焦）"
-        aria-label="搜索卡片"
-        @click="openSearch"
+        :title="netTitle"
+        :aria-label="netLabel"
+        @click="network.toggleMode()"
       >
-        <FaviconGlyph name="search" :size="16" />
+        <FaviconGlyph :name="netIcon" :size="18" />
       </button>
-
-      <span class="gap" aria-hidden="true" />
-
-      <NetworkSwitch />
 
       <span class="gap" aria-hidden="true" />
 
       <ThemeSwitch />
 
+      <span class="gap" aria-hidden="true" />
+
       <button
         class="ctl"
         type="button"
-        :title="`设置（网络模式：${netTitle}）`"
+        title="设置"
         aria-label="打开设置"
-        @click="router.push('/settings')"
+        @click="emit('open-settings')"
       >
-        <FaviconGlyph name="cog" :size="16" />
+        <FaviconGlyph name="cog" :size="18" />
       </button>
     </div>
   </div>
@@ -126,16 +87,7 @@ defineExpose({ openSearch })
   border-radius: var(--r-md);
   background: var(--card-bg);
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
-  opacity: 0.68;
-  transition: opacity 0.18s ease, background 0.18s ease;
-}
-
-.group:hover,
-.group:focus-within {
-  opacity: 1;
-  background: var(--card-bg-hi);
 }
 
 .ctl {
@@ -155,9 +107,15 @@ defineExpose({ openSearch })
   transition: background 0.14s ease, color 0.14s ease;
 }
 
-.ctl:hover {
-  background: var(--hover);
+/* hover / 键盘聚焦 / 按下时才显示底色，静止时完全透明 */
+.ctl:hover,
+.ctl:focus-visible {
+  background: var(--field-hi);
   color: var(--text);
+}
+
+.ctl:active {
+  background: var(--field);
 }
 
 /* 分组之间只留白，不画竖线 */
@@ -166,18 +124,10 @@ defineExpose({ openSearch })
   flex: none;
 }
 
-.search-input {
-  width: 200px;
-}
-
 @media (max-width: 860px) {
   .float-controls {
     top: 12px;
     right: 12px;
-  }
-
-  .search-input {
-    width: 132px;
   }
 }
 </style>

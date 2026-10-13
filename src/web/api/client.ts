@@ -12,8 +12,6 @@ import type {
   BootstrapPayload,
   Group,
   Item,
-  ProbeEntry,
-  ProbeStatus,
   SystemSnapshot,
   SystemStaticInfo,
 } from '@shared/types'
@@ -129,7 +127,9 @@ export interface GroupInput {
 
 export const api = {
   health: () =>
-    request<{ status: string; version: string; uptime: number; platform: string }>('/healthz'),
+    request<{ status: string; version: string; uptime: number; pid: number; platform: string }>(
+      '/healthz',
+    ),
 
   bootstrap: () => request<BootstrapPayload>('/api/bootstrap'),
 
@@ -167,13 +167,11 @@ export const api = {
     info: () => request<SystemStaticInfo>('/api/system/info'),
     snapshot: () => request<SystemSnapshot>('/api/system/snapshot'),
     history: () => request<SystemSnapshot[]>('/api/system/history'),
-  },
-
-  /** 内网可达性探测（M2）—— 后端未实现时调用方需优雅降级 */
-  probe: {
-    status: () => request<ProbeStatus>('/api/probe/status'),
-    refresh: () => request<ProbeStatus>('/api/probe/refresh', { method: 'POST' }),
-    check: (url: string) => request<ProbeEntry>('/api/probe/check', json({ url })),
+    /**
+     * 重启面板进程。后端先回 200、随后才关停并拉起新进程，
+     * 因此 200 只代表「已受理」，是否真的起来要轮询 /healthz 比对 pid。
+     */
+    restart: () => request<{ ok: boolean; pid: number }>('/api/system/restart', { method: 'POST' }),
   },
 
   /** 资源（图标上传 / 壁纸）。后端未实现时调用方回落到 dataURL */
@@ -189,7 +187,7 @@ export const api = {
     url: (id: string) => `/api/assets/${id}`,
   },
 
-  /** 服务端抓取 favicon（M4）—— 未实现时前端回落 DuckDuckGo 占位 */
+  /** 服务端抓取 favicon（M4）—— 抓不到就抛错，前端只提示失败 */
   favicon: {
     fetch: (url: string) =>
       request<{ assetId: string; url: string }>('/api/favicon', json({ url })),

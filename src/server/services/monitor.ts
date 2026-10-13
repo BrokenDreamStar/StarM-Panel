@@ -27,14 +27,12 @@ export interface MonitorConfig {
   hiddenIntervalMs: number
   /** GPU 采样间隔（独立于主循环） */
   gpuIntervalMs: number
-  gpuEnabled: boolean
 }
 
 export const DEFAULT_MONITOR_CONFIG: MonitorConfig = {
   intervalMs: 1000,
   hiddenIntervalMs: 10_000,
   gpuIntervalMs: 3000,
-  gpuEnabled: true,
 }
 
 class MonitorService {
@@ -51,27 +49,31 @@ class MonitorService {
   /** 防止采样耗时超过间隔导致叠加执行 */
   private sampling = false
 
+  /**
+   * 同上，针对独立的 GPU 采样器。超时上限（3s）与 GPU 采样间隔（默认 3s）
+   * 同量级，卡死的那一轮必须挡住后续 tick，否则会同时发起多个 collectGpu()。
+   */
+  private gpuSampling = false
+
   start(config: Partial<MonitorConfig> = {}): void {
     this.config = { ...DEFAULT_MONITOR_CONFIG, ...config }
 
     // 启动即采一次 GPU，拿到静态信息并确定可用指标
-    if (this.config.gpuEnabled) {
-      void collectGpu()
-        .then((g) => {
-          this.gpus = g.dynamic
-          setLastGpuMetrics(g.allMetrics)
-          if (g.static.length > 0) {
-            console.log(
-              `[monitor] 检测到 ${g.static.length} 个 GPU：` +
-                g.static.map((x) => `${x.model}(${x.vendor})`).join(', ') +
-                (g.allMetrics.length > 0
-                  ? ` — 动态指标：${g.allMetrics.join(', ')}`
-                  : ' — 无可用的动态指标（该平台不暴露）'),
-            )
-          }
-        })
-        .catch((err) => console.warn('[monitor] GPU 初始化失败:', err?.message ?? err))
-    }
+    void collectGpu()
+      .then((g) => {
+        this.gpus = g.dynamic
+        setLastGpuMetrics(g.allMetrics)
+        if (g.static.length > 0) {
+          console.log(
+            `[monitor] 检测到 ${g.static.length} 个 GPU：` +
+              g.static.map((x) => `${x.model}(${x.vendor})`).join(', ') +
+              (g.allMetrics.length > 0
+                ? ` — 动态指标：${g.allMetrics.join(', ')}`
+                : ' — 无可用的动态指标（该平台不暴露）'),
+          )
+        }
+      })
+      .catch((err) => console.warn('[monitor] GPU 初始化失败:', err?.message ?? err))
 
     this.reschedule()
     void this.sample()
@@ -129,19 +131,21 @@ class MonitorService {
 
     // GPU 采样器独立调度；无人观看时直接不跑（GPU 无历史价值，不必预热）
     if (this.gpuTimer) clearInterval(this.gpuTimer)
-    if (this.config.gpuEnabled) {
-      this.gpuTimer = setInterval(() => void this.sampleGpu(), this.config.gpuIntervalMs)
-    }
+    this.gpuTimer = setInterval(() => void this.sampleGpu(), this.config.gpuIntervalMs)
   }
 
   private async sampleGpu(): Promise<void> {
     if (this.subscribers.size === 0) return
+    if (this.gpuSampling) return
+    this.gpuSampling = true
     try {
       const g = await collectGpu()
       this.gpus = g.dynamic
       setLastGpuMetrics(g.allMetrics)
     } catch (err) {
       console.warn('[monitor] GPU 采样失败:', (err as Error)?.message ?? err)
+    } finally {
+      this.gpuSampling = false
     }
   }
 

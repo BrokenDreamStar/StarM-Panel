@@ -10,13 +10,10 @@ import { settings } from '../db/schema'
 
 export const DEFAULT_SETTINGS = {
   'network.mode': 'lan',
-  'network.autoProbe': true,
-  'network.probeInterval': 30_000,
-  'network.probeTimeout': 800,
+  'network.autoMode': false,
 
   'theme.mode': 'system',
   'theme.accent': '#6366f1',
-  'theme.blur': 12,
   'wallpaper.type': 'gradient',
   'wallpaper.value': null as string | null,
 
@@ -24,14 +21,15 @@ export const DEFAULT_SETTINGS = {
 
   'monitor.interval': 1000,
   'monitor.hiddenInterval': 10_000,
-  'monitor.gpuEnabled': true,
   'monitor.gpuInterval': 3000,
-  'monitor.disks': [] as string[],
-  'monitor.netIfaces': [] as string[],
   /**
    * 首页「系统状态」区展示哪些硬件卡片，数组顺序即展示顺序。
-   * 取值：cpu | memory | disk | network | gpu | system
-   * disk 会按挂载点展开成多张卡片（受 monitor.disks 白名单约束）。
+   * 条目为 `{ kind, device? }`（见 docs/DESIGN.md §10.3）：
+   *   - kind：cpu | memory | disk | network | gpu | system
+   *   - device：disk=挂载点 / network=网卡名 / gpu=设备序号；
+   *     缺省 = 「自动」条目，按当前设备展开成多张卡片
+   * 下面写纯字符串是默认值写法（等价于全部自动展开），新值一律写对象。
+   * 由首页「添加卡片」位按设备增删、拖拽排序（不再走设置页）。
    */
   'monitor.cards': ['cpu', 'memory', 'disk', 'network', 'gpu', 'system'] as string[],
   /** 首页主标题旁边是否显示时钟 */
@@ -39,20 +37,40 @@ export const DEFAULT_SETTINGS = {
   /** 首页主标题文案，留空则显示 "StarM Panel" */
   'ui.title': '',
 
+  /**
+   * 壁纸直排文字颜色（首页标题/时钟/分区与分组标题等）：
+   * auto = 跟随主题明暗；light = 固定白色；dark = 固定黑色。
+   */
+  'ui.wallpaperText': 'auto',
+
   'auth.enabled': false,
   'auth.passwordHash': null as string | null,
 
   'ui.showMonitor': true,
   'ui.cardSize': 'md',
   /**
-   * 卡片玻璃风格：frost = 毛玻璃（默认），liquid = 液态玻璃（前端 SVG 位移折射，
-   * 仅 Chromium 内核完整生效，其余内核自动回落毛玻璃）。
+   * 卡片风格：solid = 扁平化（默认，无模糊的半透明纯色底），
+   * frost = 毛玻璃，liquid = 液态玻璃（半透明底 + 高斯模糊 + 边缘高光，
+   * 卡片与浮层同一套材质）。
    */
-  'ui.glassStyle': 'frost',
-  /** 液态玻璃下的卡片底色不透明度（%），0 = 跟随主题默认 */
-  'ui.glassOpacity': 0,
-  /** 液态玻璃折射强度 */
-  'ui.glassScale': 64,
+  'ui.glassStyle': 'solid',
+  /**
+   * 卡片底色透明度（%），每种 UI 风格独立配置：
+   * 0 = 完全不透明，100 = 完全透明（卡片看不见）。
+   *
+   * 这里存的就是字面值，**没有**「0 = 跟随风格默认」那种哨兵值 ——
+   * 哨兵会让滑杆在 0→1 之间跨完整个不透明度区间（旧语义下 0 是浅色
+   * 毛玻璃的 α0.8 / 实色底的 α0.94，1 却是 α0.01），手感是断的。
+   * 默认值即出厂观感，深浅主题只切换色相（见 main.css 的 --card-rgb）。
+   */
+  'ui.solidTransparency': 10,
+  'ui.frostTransparency': 20,
+  'ui.liquidTransparency': 85,
+  /** 模糊半径（px）按风格独立，0 = 不模糊 */
+  'ui.frostBlur': 12,
+  'ui.liquidBlur': 12,
+  /** 液态玻璃折射强度（与 liquid-glass-demo.html 的调校基准一致） */
+  'ui.glassScale': 72,
   /** 液态玻璃边缘色散 */
   'ui.glassChroma': false,
   /**

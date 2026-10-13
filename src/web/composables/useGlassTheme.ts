@@ -1,111 +1,57 @@
 /**
  * 全局玻璃主题 —— 「UI 风格」设置的运行时。
  *
- * 液态玻璃模式下，把页面上所有卡片（[data-glass-card] 与 .card）从
- * var(--glass) 毛玻璃切到 SVG 位移折射，并按设置覆盖卡片底色透明度；
- * 切回毛玻璃时全部还原。卡片是 v-for 动态渲染的，用 MutationObserver
- * 跟进新增/移除，元素离页即释放对应滤镜。
+ * 三种风格对应 main.css 的 html[data-glass]：
+ *   solid   扁平化（实色底，--glass: none）
+ *   frost   毛玻璃（奶光渐变 + 磨砂雾面 + 散射内晕）
+ *   liquid  液态玻璃（白色/烟色半透明底 + 高斯模糊 + specular 边缘光），
+ *           卡片与浮层（设置弹窗、二级菜单）同一套材质 —— 就是「白色液态玻璃」。
  *
- * 位移折射是逐像素成本，卡片多时开销集中在滚动/动画帧 —— 参数（折射强度、
- * 色散）来自设置，但透镜带宽度等固定值保持克制，别在这里加花样。
+ * 这里只做三件事：写 html[data-glass] 挂钩、按当前风格写卡片透明度 --card-a、
+ * frost 时写模糊半径 --blur。色相由 main.css 的 --card-rgb / --card-hi-rgb
+ * 按主题与风格给出，透明度按 ui.*Transparency（每种风格独立）换算成 alpha。
+ *
+ * 说明：位移折射（backdrop-filter: url(#svg)）在 Chromium 走逐像素软件光栅，
+ * 成本与玻璃面积成正比、还会盖住任何底色，已不再用于全局样式。折射引擎仍保留
+ * 在 composables/useLiquidGlass.ts，供需要「实时折射」的独立玻璃组件按需调用。
  */
-import { onBeforeUnmount, watch, watchEffect } from 'vue'
+import { onBeforeUnmount, watchEffect } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
-import {
-  attachLiquidGlass,
-  liquidGlassSupported,
-  type LiquidGlassHandle,
-} from './useLiquidGlass'
-
-const CARD_SELECTOR = '[data-glass-card], .card'
 
 export function useGlassTheme(): void {
   const settings = useSettingsStore()
 
-  const handles = new Map<HTMLElement, LiquidGlassHandle>()
-  let observer: MutationObserver | null = null
-
-  function options() {
-    return {
-      scale: settings.glassScale,
-      depth: 28,
-      blur: 4,
-      saturation: 1.15,
-      chroma: settings.glassChroma,
-      gamma: 1.6,
-    }
-  }
-
-  function activate(el: HTMLElement): void {
-    if (handles.has(el)) return
-    handles.set(el, attachLiquidGlass(el, options))
-  }
-
-  function scan(root: ParentNode): void {
-    if (root instanceof HTMLElement && root.matches(CARD_SELECTOR)) activate(root)
-    root.querySelectorAll?.(CARD_SELECTOR).forEach((el) => activate(el as HTMLElement))
-  }
-
-  /** 元素随 v-for / 路由切换离页后，释放对应的滤镜与贴图缓存 */
-  function sweepDetached(): void {
-    for (const [el, handle] of handles) {
-      if (!el.isConnected) {
-        handle.detach()
-        handles.delete(el)
-      }
-    }
-  }
-
-  function enable(): void {
-    scan(document)
-    observer = new MutationObserver((mutations) => {
-      let structural = false
-      for (const m of mutations) {
-        m.addedNodes.forEach((n) => {
-          if (n instanceof HTMLElement) {
-            scan(n)
-            structural = true
-          }
-        })
-        if (m.removedNodes.length > 0) structural = true
-      }
-      if (structural) sweepDetached()
-    })
-    observer.observe(document.body, { childList: true, subtree: true })
-  }
-
-  function disable(): void {
-    observer?.disconnect()
-    observer = null
-    handles.forEach((handle) => handle.detach())
-    handles.clear()
-    // attach/detach 已负责清 inline 样式，这里兜底扫一遍防残留
-    document
-      .querySelectorAll<HTMLElement>(CARD_SELECTOR)
-      .forEach((el) => el.style.removeProperty('backdrop-filter'))
-  }
-
   watchEffect(() => {
-    const liquid = settings.glassStyle === 'liquid' && liquidGlassSupported
-    if (liquid) enable()
-    else disable()
+    const root = document.documentElement
 
-    // 底色不透明度覆盖：0（默认）= 跟随主题的 --card-bg
+    // html[data-glass]：main.css 的风格挂钩。液态玻璃现在对所有内核都成立
+    // （白底 + 模糊 + 边缘光，不依赖 SVG 滤镜），不再需要按内核回落到 frost。
+    root.dataset.glass = settings.glassStyle
+
+    // 卡片透明度（按风格独立：ui.*Transparency，store 的 cardTransparency 已
+    // 按当前风格取好对应值）：这里只算 alpha 写一个 inline 变量，色相留给
+    // main.css 的 --card-rgb（随主题 + 风格切换）。
+    //
+    // alpha = (100 - 透明度) / 100 —— 0 就是完全不透明，没有「0 = 跟随默认」的
+    // 哨兵值；默认值直接写在 DEFAULT_SETTINGS 里，滑杆全程线性。
     const rootStyle = document.documentElement.style
-    const opacity = settings.glassOpacity
-    if (liquid && opacity > 0) {
-      rootStyle.setProperty('--card-bg', `rgba(255, 255, 255, ${opacity / 100})`)
-      rootStyle.setProperty('--card-bg-hi', `rgba(255, 255, 255, ${Math.min(1, opacity / 100 + 0.06)})`)
+    const transparency = Math.min(100, Math.max(0, settings.cardTransparency))
+    rootStyle.setProperty('--card-a', String((100 - transparency) / 100))
+
+    // 模糊半径：frost / liquid 各自一份（solid 的 --glass 是 none，用不到）。
+    // 非这两种风格时撤掉 inline，回落到 :root 的 12px 兜底。
+    if (settings.glassStyle === 'frost' || settings.glassStyle === 'liquid') {
+      const blur = Math.min(48, Math.max(0, settings.cardBlur))
+      rootStyle.setProperty('--blur', `${blur}px`)
     } else {
-      rootStyle.removeProperty('--card-bg')
-      rootStyle.removeProperty('--card-bg-hi')
+      rootStyle.removeProperty('--blur')
     }
   })
 
-  // 折射参数变化只需重写滤镜链（贴图未变则直接复用缓存）
-  watch([() => settings.glassScale, () => settings.glassChroma], () => {
-    handles.forEach((handle) => handle.refresh())
+  onBeforeUnmount(() => {
+    const root = document.documentElement
+    delete root.dataset.glass
+    root.style.removeProperty('--card-a')
+    root.style.removeProperty('--blur')
   })
-
-  onBeforeUnmount(() => disable())
 }

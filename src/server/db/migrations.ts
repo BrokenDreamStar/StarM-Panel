@@ -80,4 +80,75 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE items DROP COLUMN open_mode;
     `,
   },
+  {
+    /**
+     * 卡片不透明度从三风格共用（ui.glassOpacity）拆成按风格独立配置
+     * （ui.solidOpacity / ui.frostOpacity / ui.liquidOpacity）。
+     * 旧共享值复制到三个新键 —— 用户调好的透明度在每种风格下都保留，之后可各自微调。
+     */
+    version: 3,
+    name: 'glass-opacity-per-style',
+    sql: `
+      INSERT INTO settings (key, value)
+        SELECT 'ui.solidOpacity', value FROM settings WHERE key = 'ui.glassOpacity';
+      INSERT INTO settings (key, value)
+        SELECT 'ui.frostOpacity', value FROM settings WHERE key = 'ui.glassOpacity';
+      INSERT INTO settings (key, value)
+        SELECT 'ui.liquidOpacity', value FROM settings WHERE key = 'ui.glassOpacity';
+      DELETE FROM settings WHERE key = 'ui.glassOpacity';
+    `,
+  },
+  {
+    /**
+     * 卡片「不透明度」→「透明度」：旧值 0 是哨兵（= 跟随风格默认：实色底
+     * α0.94、浅色毛玻璃 α0.8、液态浅色 α0.22 / 深色 α0.07），1~100 才是字面
+     * alpha。于是滑杆从 0 挪到 1 会跨完整个不透明度区间，手感是断的。
+     *
+     * 新语义去掉哨兵：0 = 完全不透明，100 = 完全透明，全程线性。
+     *   - 旧 v(>0) → 100 - v（alpha v% ⇒ 透明度 (100-v)%）
+     *   - 旧 0（哨兵）→ 该风格的新默认值
+     *   - 库里没存过的风格不插行，直接吃新默认值
+     * 代价：深浅主题不再各自用不同默认 alpha（毛玻璃/液态在深色下比过去透一档），
+     * 色相仍随主题切换（main.css 的 --card-rgb）。
+     */
+    version: 4,
+    name: 'opacity-to-transparency',
+    sql: `
+      INSERT OR IGNORE INTO settings (key, value)
+        SELECT 'ui.solidTransparency',
+               CASE WHEN CAST(value AS INTEGER) > 0
+                    THEN CAST(100 - CAST(value AS INTEGER) AS TEXT)
+                    ELSE '10' END
+          FROM settings WHERE key = 'ui.solidOpacity';
+      INSERT OR IGNORE INTO settings (key, value)
+        SELECT 'ui.frostTransparency',
+               CASE WHEN CAST(value AS INTEGER) > 0
+                    THEN CAST(100 - CAST(value AS INTEGER) AS TEXT)
+                    ELSE '20' END
+          FROM settings WHERE key = 'ui.frostOpacity';
+      INSERT OR IGNORE INTO settings (key, value)
+        SELECT 'ui.liquidTransparency',
+               CASE WHEN CAST(value AS INTEGER) > 0
+                    THEN CAST(100 - CAST(value AS INTEGER) AS TEXT)
+                    ELSE '85' END
+          FROM settings WHERE key = 'ui.liquidOpacity';
+      DELETE FROM settings
+        WHERE key IN ('ui.solidOpacity', 'ui.frostOpacity', 'ui.liquidOpacity');
+    `,
+  },
+  {
+    /**
+     * 移除监控白名单与 GPU 采样开关：
+     *   - monitor.disks / monitor.netIfaces 白名单已从设置面板移除，
+     *     磁盘与网卡改为始终展示全部设备
+     *   - monitor.gpuEnabled 开关已移除，GPU 采样器常驻
+     * 清掉旧行，避免残留配置继续影响行为。
+     */
+    version: 5,
+    name: 'drop-monitor-whitelist-and-gpu-toggle',
+    sql: `
+      DELETE FROM settings
+        WHERE key IN ('monitor.disks', 'monitor.netIfaces', 'monitor.gpuEnabled');
+    `,
+  },
 ]

@@ -27,7 +27,15 @@ export function fmtBytesPair(
   total: number | null | undefined,
   digits = 1,
 ): string {
-  return `${fmtBytes(used, digits)}/${fmtBytes(total, digits)}`
+  const a = fmtBytes(used, digits)
+  const b = fmtBytes(total, digits)
+  // 单位相同时只保留一个（"15.9/16.0 GB"），窄卡片里更省宽
+  const ai = a.lastIndexOf(' ')
+  const bi = b.lastIndexOf(' ')
+  if (ai > 0 && bi > 0 && a.slice(ai + 1) === b.slice(bi + 1)) {
+    return `${a.slice(0, ai)}/${b.slice(0, bi)} ${a.slice(ai + 1)}`
+  }
+  return `${a}/${b}`
 }
 
 /** 速率（网络）：0 是有意义的「空闲」 */

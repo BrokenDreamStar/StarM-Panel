@@ -3,8 +3,9 @@
  * 桌面卡片。
  *
  * 视觉层次：图标 → 标题/副标题 → 底部状态角标（来源 + 锁定偏好）。
- * 交互：左键按全局「打开方式」（ui.openMode）打开；右键或悬停「⋯」打开菜单
- * （编辑 / 复制链接 / 新窗口 / 删除）。
+ * 交互：左键按全局「打开方式」（ui.openMode）打开；右键打开管理菜单
+ * （编辑 / 复制链接 / 新窗口）。删除只在编辑模式的移除角标与卡片编辑器里提供。
+ * 进入分区编辑模式（editing）后，右上角才显示移除角标，且点击卡片改为打开编辑器。
  */
 import { computed, ref } from 'vue'
 import { NDropdown, NTooltip } from 'naive-ui'
@@ -23,6 +24,8 @@ const props = withDefaults(
     size?: 'sm' | 'md' | 'lg'
     /** 拖拽中（降低不透明度） */
     dragging?: boolean
+    /** 编辑模式：卡片右上角显示移除角标，点击卡片改为打开编辑器 */
+    editing?: boolean
   }>(),
   { size: 'md' },
 )
@@ -57,14 +60,12 @@ const host = computed(() => {
   }
 })
 
-const iconSize = computed(() => (props.size === 'sm' ? 22 : props.size === 'lg' ? 36 : 28))
+const iconSize = computed(() => (props.size === 'sm' ? 36 : props.size === 'lg' ? 56 : 50))
 
 const menuOptions: DropdownOption[] = [
   { label: '编辑', key: 'edit' },
   { label: '复制链接', key: 'copy' },
   { label: '在新窗口打开', key: 'open-new' },
-  { type: 'divider', key: 'd1' },
-  { label: '删除', key: 'delete' },
 ]
 
 const menuVisible = ref(false)
@@ -100,15 +101,21 @@ async function onSelect(key: string): Promise<void> {
       if (url) window.open(url, '_blank', 'noopener,noreferrer')
       break
     }
-    case 'delete': {
-      const ok = await actions.remove(props.item)
-      if (ok) emit('delete', props.item)
-      break
-    }
   }
 }
 
+/** 删除卡片（编辑模式的移除角标用；右键菜单里不再提供删除） */
+async function removeCard(): Promise<void> {
+  const ok = await actions.remove(props.item)
+  if (ok) emit('delete', props.item)
+}
+
 function activate(): void {
+  // 编辑模式下卡片不再跳转，改为打开编辑器，避免误触打开链接
+  if (props.editing) {
+    emit('edit', props.item)
+    return
+  }
   actions.open(props.item)
 }
 </script>
@@ -117,10 +124,13 @@ function activate(): void {
   <div
     class="item-card"
     data-glass-card
-    :class="[`size-${size}`, { dragging, unavailable }]"
+    :class="[
+      `size-${size}`,
+      { dragging, unavailable, 'has-badge': offMode && !editing, 'has-actions': editing },
+    ]"
     role="link"
     tabindex="0"
-    :aria-label="`${item.title}（${openModeLabel}）`"
+    :aria-label="editing ? `${item.title}（点击编辑）` : `${item.title}（${openModeLabel}）`"
     @click="activate"
     @keydown.enter.prevent="activate"
     @keydown.space.prevent="activate"
@@ -136,12 +146,11 @@ function activate(): void {
     </div>
 
     <div class="meta">
-      <NTooltip trigger="hover" :disabled="!offMode">
+      <NTooltip v-if="offMode && !editing" trigger="hover">
         <template #trigger>
-          <span v-if="offMode" class="badge" :class="`badge-${resolved.source}`">
+          <span class="badge" :class="`badge-${resolved.source}`">
             {{ sourceLabel }}
           </span>
-          <span v-else class="badge badge-ok">{{ sourceLabel }}</span>
         </template>
         <span class="tip">
           实际使用「{{ sourceLabel }}」地址
@@ -151,7 +160,7 @@ function activate(): void {
         </span>
       </NTooltip>
 
-      <NTooltip v-if="locked" trigger="hover">
+      <NTooltip v-if="locked && !editing" trigger="hover">
         <template #trigger>
           <FaviconGlyph name="lock" :size="12" class="lock" />
         </template>
@@ -162,13 +171,14 @@ function activate(): void {
       </NTooltip>
 
       <button
-        class="more"
+        v-if="editing"
+        class="card-remove"
         type="button"
-        title="更多操作"
-        aria-label="更多操作"
-        @click.stop="showMenu"
+        :title="`移除「${item.title}」`"
+        :aria-label="`移除「${item.title}」`"
+        @click.stop="removeCard"
       >
-        <FaviconGlyph name="settings" :size="13" />
+        <FaviconGlyph name="close" :size="13" />
       </button>
     </div>
   </div>
@@ -187,30 +197,31 @@ function activate(): void {
 
 <style scoped>
 /* 白玻璃卡片：没有边框，静止时只有最轻的一层投影；
-   hover 靠「玻璃变实 + 抬 1px + 投影变柔」来回应，不换成描边高亮。 */
+   hover 只做「玻璃变实 + 投影变柔」的高亮，不做位移，也不换成描边高亮。 */
 .item-card {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 13px;
-  padding: 13px 15px;
-  min-height: 68px;
+  gap: 12px;
+  padding: 10px 12px;
+  /* 固定高度：内容（标题 + 副标题）不得再改变卡片高度，
+     超出部分裁掉；紧凑档通过隐藏副标题来适配 */
+  height: 70px;
+  overflow: hidden;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   background: var(--card-bg);
   /* 显式取色：不依赖 Naive UI 注入到 body 的文字色，
      否则运行时切换主题的一瞬间卡片文字会沿用上一个主题的颜色 */
   color: var(--text);
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-1);
   cursor: pointer;
   outline: none;
-  transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  transition: background 0.16s ease, box-shadow 0.16s ease;
 }
 
 .item-card:hover {
-  transform: translateY(-1px);
   background: var(--card-bg-hi);
   box-shadow: var(--shadow-2);
 }
@@ -228,14 +239,14 @@ function activate(): void {
 }
 
 .size-sm {
-  min-height: 56px;
-  padding: 9px 12px;
-  gap: 10px;
+  height: 58px;
+  padding: 11px 12px;
+  gap: 12px;
 }
 
 .size-lg {
-  min-height: 82px;
-  padding: 17px 19px;
+  height: 86px;
+  padding: 15px 14px;
   gap: 15px;
 }
 
@@ -266,14 +277,34 @@ function activate(): void {
   margin-top: 2px;
 }
 
+/* 紧凑档不显示副标题：卡片高度固定，多一行会把内容撑出卡片 */
+.size-sm .subtitle {
+  display: none;
+}
+
+/* 角标悬浮在卡片右上角，不占正文宽度；
+   「正常」态只在悬停时浮现（与 tooltip 约定一致：与全局模式不一致才常显），
+   回退态常显，正文为其预留右侧空间。 */
 .meta {
+  position: absolute;
+  top: 8px;
+  right: 10px;
   display: flex;
   align-items: center;
   gap: 5px;
   flex: none;
 }
 
-/* 状态角标：纯色块，无边框 */
+.has-badge .body {
+  padding-right: 44px;
+}
+
+/* 编辑模式：给右上角的移除角标预留位置 */
+.has-actions .body {
+  padding-right: 30px;
+}
+
+/* 状态角标：纯色块，无边框；只在「与全局模式不一致」时常显 */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -285,10 +316,6 @@ function activate(): void {
   font-family: var(--mono);
   color: var(--text-2);
   background: var(--surface-2);
-}
-
-.badge-ok {
-  opacity: 0.5;
 }
 
 .badge-fallback {
@@ -312,7 +339,8 @@ function activate(): void {
   opacity: 0.9;
 }
 
-.more {
+/* 编辑模式的移除角标 */
+.card-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -324,18 +352,13 @@ function activate(): void {
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease;
+  transition: background 0.14s ease, color 0.14s ease;
 }
 
-.item-card:hover .more,
-.item-card:focus-within .more {
-  opacity: 1;
-}
-
-.more:hover {
-  background: var(--hover);
-  color: var(--text);
+.card-remove:hover,
+.card-remove:focus-visible {
+  background: color-mix(in srgb, var(--err) 16%, transparent);
+  color: var(--err);
 }
 
 .tip {

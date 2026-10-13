@@ -65,8 +65,7 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
   justify-content: center;
   gap: clamp(20px, 3vw, 34px);
   padding: clamp(56px, 10vh, 104px) 8px clamp(34px, 5.5vh, 58px);
-  color: var(--text);
-  text-shadow: var(--hero-glow);
+  color: var(--wp-text);
   text-align: center;
 }
 
@@ -94,7 +93,7 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
 .clock-date {
   margin-top: 3px;
   font-size: clamp(11px, 1.2vw, 14px);
-  color: var(--text);
+  color: var(--wp-text);
   opacity: 0.72;
 }
 

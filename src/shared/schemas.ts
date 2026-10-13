@@ -78,7 +78,7 @@ const urlInput = z
 
 export const IconTypeSchema = z.enum(['iconify', 'asset', 'text', 'favicon'])
 export const NetworkPrefSchema = z.enum(['auto', 'lan', 'wan'])
-export const NetworkModeSchema = z.enum(['lan', 'wan', 'auto'])
+export const NetworkModeSchema = z.enum(['lan', 'wan'])
 export const AssetKindSchema = z.enum(['icon', 'wallpaper', 'favicon'])
 
 // ─────────────────────────────────────────────────────────────
@@ -106,9 +106,16 @@ export const GroupReorderSchema = z.object({
 // 卡片
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * 卡片标题长度上限。
+ * 卡片尺寸虽有三档（紧凑 150 / 标准 200 / 宽松 250 最小列宽），但标题本就有省略号兜底，
+ * 统一给 24 就够用，不按尺寸分档。
+ */
+export const TITLE_MAX = 24
+
 const ItemBase = z.object({
   groupId: z.number().int().positive().nullish().transform((v) => v ?? null),
-  title: z.string().trim().min(1, '标题不能为空').max(64),
+  title: z.string().trim().min(1, '标题不能为空').max(TITLE_MAX, `标题最多 ${TITLE_MAX} 个字符`),
   subtitle: z.string().trim().max(128).nullish().transform((v) => v || null),
   iconType: IconTypeSchema.default('iconify'),
   iconValue: z.string().max(4096).nullish().transform((v) => v || null),
@@ -156,9 +163,5 @@ export const SettingsPatchSchema = z.record(z.string().min(1).max(64), z.unknown
 // ─────────────────────────────────────────────────────────────
 
 export const FaviconRequestSchema = z.object({
-  url: z.string().trim().min(1).max(2048),
-})
-
-export const ProbeCheckSchema = z.object({
   url: z.string().trim().min(1).max(2048),
 })

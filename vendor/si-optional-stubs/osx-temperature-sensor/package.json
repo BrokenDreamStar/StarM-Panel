@@ -1,0 +1,7 @@
+{
+  "name": "osx-temperature-sensor",
+  "version": "0.0.0-starm-stub",
+  "private": true,
+  "description": "占位模块：systeminformation 的可选原生依赖，仅用于避免 bun --watch 下模块解析失败的 fd 泄漏",
+  "main": "index.js"
+}

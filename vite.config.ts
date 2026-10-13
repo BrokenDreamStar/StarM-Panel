@@ -40,6 +40,13 @@ export default defineConfig({
         bypass: (req) =>
           /^\/api\/[^/]+\.(?:ts|js|map)(?:\?|$)/.test(req.url ?? '') ? req.url : undefined,
       },
+      // /healthz 挂在后端根路径（见 server/index.ts），不代理的话会落到
+      // Vite 的 SPA fallback 返回 index.html，前端 api.health() 解析失败，
+      // 「设置 → 关于」的运行时长永远是「—」。
+      '/healthz': {
+        target: 'http://127.0.0.1:3002',
+        changeOrigin: true,
+      },
     },
   },
 })

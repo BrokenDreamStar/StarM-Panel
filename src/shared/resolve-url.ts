@@ -1,7 +1,9 @@
 /**
  * 内外网 URL 解析 —— 前后端共用的纯函数。
  *
- * 优先级：卡片级 network_pref  >  全局 mode  >  探测结果（仅 auto 时）
+ * 优先级：卡片级 network_pref  >  全局 mode
+ * 全局 mode 只接收已落地的 'lan' | 'wan'：'auto' 由调用方按访问方式
+ * （isLanHost）先解析成具体模式再传入。
  *
  * 设计约束：
  *   - 无副作用、无 IO、不依赖任何运行时 API
@@ -51,17 +53,33 @@ export function resolveUrl(item: Item, ctx: ResolveContext): ResolvedUrl {
   if (ctx.mode === 'lan') {
     return choose(lanUrl, wanUrl, 'lan')
   }
-  if (ctx.mode === 'wan') {
-    return choose(wanUrl, lanUrl, 'wan')
+  return choose(wanUrl, lanUrl, 'wan')
+}
+
+/**
+ * 判断主机名是否属于内网访问 —— auto 模式的落地依据：
+ * 用 IP（或本机 localhost）访问面板视为内网，用域名访问视为外网。
+ *
+ * 规则：
+ *   - localhost / *.localhost → 内网
+ *   - IPv4 字面量（任意）→ 内网
+ *   - IPv6 字面量（含 `::1` / `::`）→ 内网
+ *   - 其余（域名、无法识别的主机名）→ 外网
+ */
+export function isLanHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  // 无法识别（空主机名等）→ 保守按外网，与原 auto 的降级方向一致
+  if (host === '') return false
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (ipv4) {
+    const octets = ipv4.slice(1).map(Number)
+    return octets.every((n) => n <= 255)
   }
 
-  // ── 3. 全局 auto：用探测结果决定 ───────────────────────────
-  // 探测未知（undefined）时保守选外网：外网地址通常在任何网络下都可达，
-  // 而内网地址在外网环境下会直接连接失败。
-  if (ctx.lanReachable === true) {
-    return choose(lanUrl, wanUrl, 'lan')
-  }
-  return choose(wanUrl, lanUrl, 'wan')
+  // 域名不可能含冒号，含冒号即为 IPv6 字面量
+  return host.includes(':')
 }
 
 /**

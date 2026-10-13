@@ -8,7 +8,7 @@
  * 兼容性：仅 Chromium 有折射；其他内核自然回落到下方 CSS var(--glass) 毛玻璃。
  *
  * 用法：圆角默认 var(--r-md)，可用 `--lg-radius` 覆盖（胶囊/圆形也能正确成镜）；
- * 底色默认 var(--card-bg)，可用 `--lg-tint` 覆盖。
+ * 玻璃壳不铺底色，折射直接透出背景（与 demo 一致）。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { attachLiquidGlass, type LiquidGlassHandle } from '@/composables/useLiquidGlass'
@@ -29,10 +29,10 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  scale: 64,
-  depth: 28,
+  scale: 72,
+  depth: 34,
   blur: 4,
-  saturation: 1.15,
+  saturation: 1.25,
   chroma: true,
   gamma: 1.6,
 })
@@ -73,14 +73,15 @@ onBeforeUnmount(() => {
 .liquid-glass {
   position: relative;
   border-radius: var(--lg-radius, var(--r-md));
-  background: var(--lg-tint, var(--card-bg));
+  /* 不铺白色底：让 SVG 折射直接透出背景（与 demo 一致） */
+  background: transparent;
   box-shadow: var(--shadow-2);
   /* 非 Chromium 的降级路径：SVG 滤镜仅在 Chromium 下经 JS 启用 */
   backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
 }
 
-/* 边缘高光：液态玻璃的 rim light，纯 CSS、不走滤镜 */
+/* 边缘高光：液态玻璃的 specular rim（与 main.css 的 [data-glass='liquid']
+   材质块同源，这里供独立小面积玻璃使用）；不再叠加整面白纱 */
 .liquid-glass::before {
   content: '';
   position: absolute;
@@ -88,8 +89,11 @@ onBeforeUnmount(() => {
   border-radius: inherit;
   pointer-events: none;
   box-shadow:
-    inset 1.2px 1.2px 1px -1px rgba(255, 255, 255, 0.5),
-    inset -1px -1px 1px -1px rgba(255, 255, 255, 0.26),
-    inset 0 0 14px rgba(255, 255, 255, 0.05);
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.24),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.17),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.15),
+    inset 0 0 14px rgba(255, 255, 255, 0.055);
 }
 </style>

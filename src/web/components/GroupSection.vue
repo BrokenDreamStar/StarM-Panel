@@ -14,11 +14,21 @@ import { useSettingsStore } from '@/stores/settings'
 import ItemCard from './ItemCard.vue'
 import FaviconGlyph from './FaviconGlyph.vue'
 
-const props = defineProps<{
-  /** null = 未分组区段 */
-  group: Group | null
-  items: Item[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** null = 未分组区段 */
+    group: Group | null
+    items: Item[]
+    /** APP 区编辑模式：透传给卡片，控制移除角标 */
+    editing?: boolean
+    /**
+     * 是否渲染区段标题行（折叠按钮 / 名称 / 计数 / 操作菜单）。
+     * 面板里一个分组都没有时，唯一的「未分组」标题没有信息量，由首页置 false 收起。
+     */
+    showHeader?: boolean
+  }>(),
+  { showHeader: true },
+)
 
 const emit = defineEmits<{
   (e: 'edit', item: Item): void
@@ -30,7 +40,7 @@ const settings = useSettingsStore()
 
 const collapsed = ref(props.group?.collapsed ?? false)
 
-const editing = ref(false)
+const renaming = ref(false)
 const nameDraft = ref('')
 const nameInput = ref<InstanceType<typeof NInput> | null>(null)
 
@@ -54,15 +64,15 @@ function toggle(): void {
 async function startRename(): Promise<void> {
   if (!props.group) return
   nameDraft.value = props.group.name
-  editing.value = true
+  renaming.value = true
   await nextTick()
   nameInput.value?.focus()
 }
 
 async function commitRename(): Promise<void> {
-  if (!props.group || !editing.value) return
+  if (!props.group || !renaming.value) return
   const name = nameDraft.value.trim()
-  editing.value = false
+  renaming.value = false
   if (name === '' || name === props.group.name) return
   try {
     await itemsStore.updateGroup(props.group.id, { name })
@@ -144,7 +154,7 @@ const cardSize = computed(() => settings.cardSize)
 
 <template>
   <section class="group">
-    <header class="group-head">
+    <header v-if="showHeader" class="group-head">
       <button
         class="group-toggle"
         type="button"
@@ -161,14 +171,14 @@ const cardSize = computed(() => settings.cardSize)
       </button>
 
       <NInput
-        v-if="editing"
+        v-if="renaming"
         ref="nameInput"
         v-model:value="nameDraft"
         size="tiny"
         class="rename-input"
         @blur="commitRename"
         @keydown.enter="commitRename"
-        @keydown.esc="editing = false"
+        @keydown.esc="renaming = false"
       />
       <h2 v-else class="group-title" @dblclick="startRename">
         {{ title }}
@@ -177,7 +187,13 @@ const cardSize = computed(() => settings.cardSize)
 
       <span class="spacer" />
 
-      <NButton size="tiny" quaternary title="新建卡片" @click="emit('create', group?.id ?? null)">
+      <NButton
+        v-if="editing || count === 0"
+        size="tiny"
+        quaternary
+        title="新建卡片"
+        @click="emit('create', group?.id ?? null)"
+      >
         <FaviconGlyph name="plus" :size="13" />
       </NButton>
 
@@ -199,6 +215,7 @@ const cardSize = computed(() => settings.cardSize)
         :key="item.id"
         :item="item"
         :size="cardSize"
+        :editing="editing"
         :dragging="dragId === item.id"
         :class="{ 'drop-target': overId === item.id }"
         draggable="true"
@@ -208,7 +225,12 @@ const cardSize = computed(() => settings.cardSize)
         @dragend="dragId = null; overId = null"
         @edit="emit('edit', item)"
       />
-      <button class="add-tile" type="button" @click="emit('create', group?.id ?? null)">
+      <button
+        v-if="editing || count === 0"
+        class="add-tile"
+        type="button"
+        @click="emit('create', group?.id ?? null)"
+      >
         <span class="plus-circle"><FaviconGlyph name="plus" :size="15" /></span>
         <span>新建卡片</span>
       </button>
@@ -238,7 +260,7 @@ const cardSize = computed(() => settings.cardSize)
   border: 0;
   border-radius: var(--r-xs);
   background: transparent;
-  color: var(--text-2);
+  color: var(--wp-text-2);
   cursor: pointer;
 }
 
@@ -263,7 +285,7 @@ const cardSize = computed(() => settings.cardSize)
 .group-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--wp-text);
   letter-spacing: -0.008em;
   cursor: default;
   display: flex;
@@ -274,7 +296,7 @@ const cardSize = computed(() => settings.cardSize)
 /* 计数不描边，只是一枚更淡的色块 */
 .group-count {
   font-size: 11px;
-  color: var(--text-3);
+  color: var(--wp-text-3);
   padding: 1px 6px;
   border-radius: var(--r-xs);
   background: var(--surface-2);
@@ -290,19 +312,19 @@ const cardSize = computed(() => settings.cardSize)
 
 .group-body {
   display: grid;
-  gap: 12px;
+  gap: 18px;
 }
 
 .group-body.size-sm {
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 
 .group-body.size-md {
-  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
 .group-body.size-lg {
-  grid-template-columns: repeat(auto-fill, minmax(284px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
 }
 
 /* 拖拽落点是功能提示，不是装饰线：保留但做得更柔 */
@@ -311,30 +333,39 @@ const cardSize = computed(() => settings.cardSize)
   outline-offset: 2px;
 }
 
-/* 「新建卡片」位：静止时几乎不存在，只有一个 + 号；
-   hover 才浮成一张卡片。去线之后靠这个对比表达可操作性。 */
+/* 「新建卡片」位：与普通卡片同款玻璃底、同款投影，
+   hover 同 ItemCard 一样只高亮不位移，只是内容是一枚 + 号。 */
 .add-tile {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 68px;
+  height: 70px;
   padding: 13px 15px;
   border: 0;
-  border-radius: var(--r-md);
-  background: transparent;
+  border-radius: var(--r-xl);
+  background: var(--card-bg);
+  backdrop-filter: var(--glass);
+  box-shadow: var(--shadow-1);
   color: var(--text-3);
   font: inherit;
   font-size: 13px;
   cursor: pointer;
-  transition: transform 0.16s ease, background 0.16s ease, color 0.16s ease,
-    box-shadow 0.16s ease;
+  transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+/* 与 ItemCard 的三档固定高度对齐 */
+.group-body.size-sm .add-tile {
+  height: 58px;
+  padding: 11px 12px;
+}
+
+.group-body.size-lg .add-tile {
+  height: 86px;
+  padding: 15px 14px;
 }
 
 .add-tile:hover {
-  transform: translateY(-1px);
   background: var(--card-bg-hi);
-  backdrop-filter: var(--glass);
-  -webkit-backdrop-filter: var(--glass);
   box-shadow: var(--shadow-2);
   color: var(--text);
 }

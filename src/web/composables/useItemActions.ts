@@ -8,6 +8,7 @@ import { useMessage } from 'naive-ui'
 import { useItemsStore } from '@/stores/items'
 import { useNetworkStore } from '@/stores/network'
 import { useSettingsStore } from '@/stores/settings'
+import { useDeleteConfirm } from './useDeleteConfirm'
 import type { Item } from '@shared/types'
 
 export interface OpenResult {
@@ -21,6 +22,7 @@ export function useItemActions() {
   const network = useNetworkStore()
   const settings = useSettingsStore()
   const message = useMessage()
+  const { confirmRemove } = useDeleteConfirm()
 
   /** 解析 + 按全局打开方式打开；返回结果供调用方决定是否提示 */
   function open(item: Item): OpenResult {
@@ -61,6 +63,8 @@ export function useItemActions() {
   }
 
   async function remove(item: Item): Promise<boolean> {
+    // 删除不可逆：先弹二级确认，用户取消则不请求接口
+    if (!(await confirmRemove(item))) return false
     try {
       await items.removeItem(item.id)
       message.success(`已删除「${item.title}」`)

@@ -1,12 +1,13 @@
 /**
  * 内外网 URL 解析的单元测试。
  *
- * 这是本项目最核心的逻辑，docs/DESIGN.md §6 要求覆盖
- * 「3 种卡片偏好 × 3 种全局模式」的完整优先级矩阵，以及各字段缺失时的回退。
+ * docs/DESIGN.md §6 要求覆盖「3 种卡片偏好 × 2 种落地模式」的优先级矩阵，
+ * 以及各字段缺失时的回退。全局 mode 只接收 lan / wan：'auto' 由调用方
+ * （network store）按 isLanHost 的访问方式判定落地，这里同时覆盖该判定。
  */
 import { describe, expect, test } from 'bun:test'
-import { describeSource, resolveUrl } from './resolve-url'
-import type { Item, NetworkMode, NetworkPref } from './types'
+import { describeSource, isLanHost, resolveUrl } from './resolve-url'
+import type { Item, NetworkPref } from './types'
 
 const LAN = 'http://192.168.1.5:5000/'
 const WAN = 'https://nas.example.com/'
@@ -37,17 +38,17 @@ function makeItem(
 }
 
 describe('resolveUrl — 卡片级偏好优先于全局模式', () => {
-  const modes: NetworkMode[] = ['lan', 'wan', 'auto']
+  const modes = ['lan', 'wan'] as const
 
   for (const mode of modes) {
     test(`pref=lan 时，全局 mode=${mode} 不影响结果`, () => {
-      const r = resolveUrl(makeItem(LAN, WAN, 'lan'), { mode, lanReachable: false })
+      const r = resolveUrl(makeItem(LAN, WAN, 'lan'), { mode })
       expect(r.url).toBe(LAN)
       expect(r.source).toBe('lan')
     })
 
     test(`pref=wan 时，全局 mode=${mode} 不影响结果`, () => {
-      const r = resolveUrl(makeItem(LAN, WAN, 'wan'), { mode, lanReachable: true })
+      const r = resolveUrl(makeItem(LAN, WAN, 'wan'), { mode })
       expect(r.url).toBe(WAN)
       expect(r.source).toBe('wan')
     })
@@ -63,26 +64,6 @@ describe('resolveUrl — 全局模式（卡片 pref=auto）', () => {
 
   test('mode=wan 选外网', () => {
     const r = resolveUrl(makeItem(LAN, WAN), { mode: 'wan' })
-    expect(r.url).toBe(WAN)
-    expect(r.source).toBe('wan')
-  })
-})
-
-describe('resolveUrl — 全局 auto 依赖探测结果', () => {
-  test('探测可达 → 内网', () => {
-    const r = resolveUrl(makeItem(LAN, WAN), { mode: 'auto', lanReachable: true })
-    expect(r.url).toBe(LAN)
-    expect(r.source).toBe('lan')
-  })
-
-  test('探测不可达 → 外网', () => {
-    const r = resolveUrl(makeItem(LAN, WAN), { mode: 'auto', lanReachable: false })
-    expect(r.url).toBe(WAN)
-    expect(r.source).toBe('wan')
-  })
-
-  test('探测结果未知 → 保守选外网（外网在任何网络下都更可能可达）', () => {
-    const r = resolveUrl(makeItem(LAN, WAN), { mode: 'auto' })
     expect(r.url).toBe(WAN)
     expect(r.source).toBe('wan')
   })
@@ -113,15 +94,9 @@ describe('resolveUrl — 单边地址缺失时回退，绝不返回 null（除�
     expect(r.source).toBe('fallback')
   })
 
-  test('只有内网地址 + auto 且不可达 → 仍回退内网（总比打不开好）', () => {
-    const r = resolveUrl(makeItem(LAN, null), { mode: 'auto', lanReachable: false })
-    expect(r.url).toBe(LAN)
-    expect(r.source).toBe('fallback')
-  })
-
   test('两边都为空 → null / none', () => {
     for (const pref of ['auto', 'lan', 'wan'] as NetworkPref[]) {
-      for (const mode of ['lan', 'wan', 'auto'] as NetworkMode[]) {
+      for (const mode of ['lan', 'wan'] as const) {
         const r = resolveUrl(makeItem(null, null, pref), { mode })
         expect(r.url).toBeNull()
         expect(r.source).toBe('none')
@@ -132,30 +107,78 @@ describe('resolveUrl — 单边地址缺失时回退，绝不返回 null（除�
 
 describe('resolveUrl — 任意组合下都不会返回「空 URL 但有地址可选」', () => {
   const prefs: NetworkPref[] = ['auto', 'lan', 'wan']
-  const modes: NetworkMode[] = ['lan', 'wan', 'auto']
+  const modes = ['lan', 'wan'] as const
   const urls: Array<[string | null, string | null]> = [
     [LAN, WAN],
     [LAN, null],
     [null, WAN],
   ]
 
-  test('穷举 3×3×3×2：只要存在任一地址就必有结果', () => {
+  test('穷举 3×2×3：只要存在任一地址就必有结果', () => {
     for (const pref of prefs) {
       for (const mode of modes) {
         for (const [lan, wan] of urls) {
-          for (const reachable of [true, false, undefined]) {
-            const r = resolveUrl(makeItem(lan, wan, pref), {
-              mode,
-              lanReachable: reachable,
-            })
-            expect(r.url).not.toBeNull()
-            expect([LAN, WAN]).toContain(r.url!)
-            expect(r.source).not.toBe('none')
-          }
+          const r = resolveUrl(makeItem(lan, wan, pref), { mode })
+          expect(r.url).not.toBeNull()
+          expect([LAN, WAN]).toContain(r.url!)
+          expect(r.source).not.toBe('none')
         }
       }
     }
   })
+})
+
+describe('isLanHost — IP 字面量 / 本机视为内网', () => {
+  const lanHosts = [
+    '192.168.1.10',
+    '192.168.0.1',
+    '10.2.3.4',
+    '10.0.0.1',
+    '172.16.0.1',
+    '172.31.255.255',
+    '172.15.0.1',
+    '172.32.0.1',
+    '127.0.0.1',
+    '0.0.0.0',
+    '169.254.9.9',
+    '11.0.0.1',
+    '192.169.1.1',
+    '100.64.0.1',
+    '8.8.8.8',
+    'localhost',
+    'panel.localhost',
+    '::1',
+    '::',
+    '[::1]',
+    'fe80::1',
+    'febf::abcd',
+    'fc00::abcd',
+    'fd12:3456::1',
+    '2408:8207::1',
+    '2606:4700::1111',
+  ]
+
+  for (const host of lanHosts) {
+    test(`${host} → 内网`, () => {
+      expect(isLanHost(host)).toBe(true)
+    })
+  }
+})
+
+describe('isLanHost — 域名视为外网', () => {
+  const wanHosts = [
+    'nas.example.com',
+    'panel.home.arpa',
+    'mynas.local',
+    '999.1.1.1',
+    '',
+  ]
+
+  for (const host of wanHosts) {
+    test(`${host === '' ? '(空)' : host} → 外网`, () => {
+      expect(isLanHost(host)).toBe(false)
+    })
+  }
 })
 
 describe('describeSource', () => {

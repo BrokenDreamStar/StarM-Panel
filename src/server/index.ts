@@ -10,18 +10,18 @@ import { systemRoutes } from './routes/system'
 import { itemRoutes } from './routes/items'
 import { groupRoutes } from './routes/groups'
 import { settingsRoutes } from './routes/settings'
-import { probeRoutes } from './routes/probe'
 import { assetRoutes } from './routes/assets'
 import { faviconRoutes } from './routes/favicon'
+import { wallpaperRoutes } from './routes/wallpaper'
 import { backupRoutes } from './routes/backup'
 import { bootstrapRoutes } from './routes/bootstrap'
 import { registerStatic } from './static'
 import { monitor } from './services/monitor'
-import { probe } from './services/probe'
 import { HELP, getConfig, resolveConfig } from './env'
 import { DB_PATH, SCHEMA_VERSION, closeDb } from './db'
 import { HttpError, notFound, onError } from './middleware/error'
 import { getSetting } from './services/settings'
+import { registerRestartHooks } from './services/restart'
 
 const VERSION = '0.1.0'
 
@@ -60,9 +60,9 @@ app.route('/api/system', systemRoutes)
 app.route('/api/items', itemRoutes)
 app.route('/api/groups', groupRoutes)
 app.route('/api/settings', settingsRoutes)
-app.route('/api/probe', probeRoutes)
 app.route('/api/assets', assetRoutes)
 app.route('/api/favicon', faviconRoutes)
+app.route('/api/wallpaper', wallpaperRoutes)
 app.route('/api/backup', backupRoutes)
 
 // 必须最后注册：捕获所有未匹配路径，输出嵌入的前端资源
@@ -72,10 +72,8 @@ registerStatic(app)
 monitor.start({
   intervalMs: getSetting('monitor.interval'),
   hiddenIntervalMs: getSetting('monitor.hiddenInterval'),
-  gpuEnabled: getSetting('monitor.gpuEnabled'),
   gpuIntervalMs: getSetting('monitor.gpuInterval'),
 })
-probe.start()
 
 const server = Bun.serve({
   port: config.port,
@@ -95,18 +93,27 @@ console.log(`
 `)
 
 let shuttingDown = false
+
+/**
+ * 统一关停：停采样 → 关服务器（显式释放监听端口）→ WAL checkpoint 并关库。
+ *
+ * Ctrl-C / SIGTERM 退出与「关于」页的重启按钮都走这里。顺序不能变：
+ * 端口必须先释放，重启拉起的新进程才能立刻 bind（见 services/restart）。
+ */
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return
+  shuttingDown = true
+  monitor.stop()
+  await server.stop(true)
+  closeDb()
+}
+
+registerRestartHooks({ shutdown })
+
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
-    if (shuttingDown) return
-    shuttingDown = true
     console.log(`\n收到 ${sig}，正在退出…`)
-    monitor.stop()
-    probe.stop()
-    void server.stop(true).then(() => {
-      // WAL checkpoint + 关闭连接，保证数据文件干净
-      closeDb()
-      process.exit(0)
-    })
+    void shutdown().then(() => process.exit(0))
   })
 }
 

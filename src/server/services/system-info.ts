@@ -21,6 +21,7 @@ import {
   readDiskCounters,
   type DiskCounters,
 } from './diskstats'
+import { readMacGpuStats, type MacGpuStat } from './gpu-macos'
 
 /** systeminformation 在指标不可用时返回负数哨兵值（通常是 -1） */
 function validNumber(v: unknown): number | null {
@@ -34,12 +35,79 @@ function round1(v: number): number {
   return Math.round(v * 10) / 10
 }
 
-/** 逐项独立捕获失败，任何一项挂掉都不影响其它项 */
-async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+/**
+ * 采集超时预算（毫秒）。
+ *
+ * 「采集失败」不止是抛异常：系统调用卡死时 `si.*` 会一直 pending，既不 resolve
+ * 也不 reject，只靠 try/catch 拦不住，会让整个接口永久挂起 —— 实测进程 fd 打满后
+ * `/api/system/info` 数十秒不返回，前端「关于」页的 CPU / 内核整块变成「—」。
+ * 因此超时与异常同等对待，一律降级为 fallback（字段级失败隔离）。
+ *
+ *   - 静态信息：按需触发（一个请求采一次），可以等久一点；
+ *   - 高频采样：1s 主循环 / 3s GPU 采样器，等太久会拖住后续整轮采样，必须尽早放弃。
+ *
+ * 做成可变对象是为了让单测能调得很小（否则一个用例要等 10 秒）。
+ */
+export const COLLECTOR_TIMEOUTS = {
+  static: 10_000,
+  sample: 3_000,
+}
+
+/** 采集超时 —— 语义上与「该项不可用」等价 */
+class CollectorTimeoutError extends Error {
+  constructor(label: string, ms: number) {
+    super(`${label} 超过 ${ms}ms 未返回`)
+    this.name = 'CollectorTimeoutError'
+  }
+}
+
+/**
+ * 给采集函数套一层超时。
+ *
+ * 注意：超时只是**放弃等待**，并不会中断底层调用（JS 无法取消已 spawn 的子进程 /
+ * 已发出的系统调用）。调用方靠「同一轮采样不叠加执行」的守卫避免无限堆积，
+ * 见 monitor.ts 的 `sampling` / `gpuSampling`。
+ * 另：`readMacGpuStats()` 用的是同步 `Bun.spawnSync`，卡死时会占住事件循环，
+ * 连超时定时器都无法触发 —— 同步调用不受本函数保护。
+ *
+ * 导出仅供单测使用。
+ */
+export async function withTimeout<T>(
+  fn: () => Promise<T>,
+  ms: number,
+  label = '采集',
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    return await fn()
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new CollectorTimeoutError(label, ms)), ms)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 逐项独立捕获失败，任何一项挂掉都不影响其它项。
+ * 「挂掉」既包括抛异常，也包括超时（见 withTimeout）。
+ * `onFailure` 用于让调用方知道本轮出现过降级（例如据此决定结果能不能进缓存）。
+ * 导出仅供单测使用。
+ */
+export async function safe<T>(
+  fn: () => Promise<T>,
+  fallback: T,
+  timeoutMs = COLLECTOR_TIMEOUTS.sample,
+  label = '采集',
+  onFailure?: () => void,
+): Promise<T> {
+  try {
+    return await withTimeout(fn, timeoutMs, label)
   } catch (err) {
     console.warn('[system-info] 采集失败:', (err as Error)?.message ?? err)
+    onFailure?.()
     return fallback
   }
 }
@@ -63,13 +131,25 @@ function normalizeGpuVendor(vendor: unknown, model: unknown): string {
  * 推导该 GPU 上「真实可用」的指标名。
  * 前端据此只渲染存在的控件，避免出现一排 N/A
  * （各厂商暴露的指标差异极大，见 docs/DESIGN.md §7.3）。
+ *
+ * `mac` 是 macOS 专用补充源（IORegistry 的 PerformanceStatistics，见 gpu-macos.ts）——
+ * systeminformation 在 macOS 上不提供任何动态字段，不补的话 GPU 卡片只剩型号。
  */
-function deriveGpuMetrics(c: Record<string, unknown>): GpuMetric[] {
+function deriveGpuMetrics(c: Record<string, unknown>, mac: MacGpuStat | null): GpuMetric[] {
   const out: GpuMetric[] = []
   const has = (key: string) => validNumber(c[key]) !== null
+  const hasNum = (v: number | null | undefined) => typeof v === 'number' && Number.isFinite(v)
 
-  if (has('utilizationGpu')) out.push('utilization')
-  if (has('memoryUsed') || has('memoryTotal') || has('vram')) out.push('memory')
+  if (has('utilizationGpu') || hasNum(mac?.utilization)) out.push('utilization')
+  if (
+    has('memoryUsed') ||
+    has('memoryTotal') ||
+    has('vram') ||
+    hasNum(mac?.memoryUsed) ||
+    hasNum(mac?.memoryTotal)
+  ) {
+    out.push('memory')
+  }
   if (has('temperatureGpu')) out.push('temperature')
   if (has('powerDraw')) out.push('power')
   if (has('fanSpeed')) out.push('fan')
@@ -235,10 +315,31 @@ function mapGpuStatic(controllers: Record<string, unknown>[]): GpuStaticInfo[] {
   }))
 }
 
-function mapGpuDynamic(controllers: Record<string, unknown>[]): GpuSnapshot[] {
+/** 把 ioreg 采到的 GPU 与 si.graphics() 的控制器对齐：先按型号匹配，再退回下标 */
+function pickMacGpuStat(
+  macStats: readonly MacGpuStat[],
+  model: string,
+  index: number,
+): MacGpuStat | null {
+  const target = model.toLowerCase()
+  const matched = macStats.find((s) => {
+    const m = s.model?.toLowerCase()
+    return m ? m === target || target.includes(m) || m.includes(target) : false
+  })
+  return matched ?? macStats[index] ?? null
+}
+
+function mapGpuDynamic(
+  controllers: Record<string, unknown>[],
+  macStats: readonly MacGpuStat[] = [],
+): GpuSnapshot[] {
   return controllers.map((c, index) => {
-    const memoryTotal = validNumber(c['memoryTotal']) ?? validNumber(c['vram'])
-    const memoryUsed = validNumber(c['memoryUsed'])
+    const model = (c['model'] as string) || (c['name'] as string) || '未知 GPU'
+    const mac = pickMacGpuStat(macStats, model, index)
+
+    const memoryTotal =
+      validNumber(c['memoryTotal']) ?? validNumber(c['vram']) ?? mac?.memoryTotal ?? null
+    const memoryUsed = validNumber(c['memoryUsed']) ?? mac?.memoryUsed ?? null
     const memoryUtilization =
       memoryUsed !== null && memoryTotal !== null && memoryTotal > 0
         ? round1((memoryUsed / memoryTotal) * 100)
@@ -247,8 +348,8 @@ function mapGpuDynamic(controllers: Record<string, unknown>[]): GpuSnapshot[] {
     return {
       index,
       vendor: normalizeGpuVendor(c['vendor'], c['model']),
-      model: (c['model'] as string) || (c['name'] as string) || '未知 GPU',
-      utilization: validNumber(c['utilizationGpu']),
+      model,
+      utilization: validNumber(c['utilizationGpu']) ?? mac?.utilization ?? null,
       memoryUsed,
       memoryTotal,
       memoryUtilization,
@@ -258,7 +359,7 @@ function mapGpuDynamic(controllers: Record<string, unknown>[]): GpuSnapshot[] {
       fanSpeed: validNumber(c['fanSpeed']),
       clockCore: validNumber(c['clockCore']),
       clockMemory: validNumber(c['clockMemory']),
-      available: deriveGpuMetrics(c),
+      available: deriveGpuMetrics(c, mac),
     }
   })
 }
@@ -289,10 +390,12 @@ export async function collectGpu(): Promise<{
   const graphics = await safe(
     () => si.graphics(),
     { controllers: [], displays: [] } as Awaited<ReturnType<typeof si.graphics>>,
+    COLLECTOR_TIMEOUTS.sample,
+    'graphics',
   )
 
   const controllers = asRecords(graphics.controllers)
-  const dynamic = mapGpuDynamic(controllers)
+  const dynamic = mapGpuDynamic(controllers, readMacGpuStats())
   const allMetrics = [...new Set(dynamic.flatMap((g) => g.available))]
 
   return {
@@ -323,26 +426,42 @@ export async function getStaticInfo(force = false): Promise<SystemStaticInfo> {
     return staticCache.value
   }
 
+  // 采集是否出现过异常 / 超时。降级后的结果**不入缓存**：否则一次资源耗尽
+  // （实测过 bun --watch 泄漏 fd 把进程打满）会让静态信息里的设备清单
+  // （disks / net / gpus）整整 5 分钟都是空的 —— 首页只剩 CPU / RAM / SYS
+  // 三张卡，且「添加卡片」没有任何设备候选。不入缓存则下次请求立刻重试。
+  let failures = 0
+
+  // 静态信息按需采集，统一给长超时（label 用于日志定位是哪一项卡住）
+  const collect = <T>(label: string, fn: () => Promise<T>, fallback: T) =>
+    safe(fn, fallback, COLLECTOR_TIMEOUTS.static, label, () => {
+      failures += 1
+    })
+
   const [cpu, cpuSpeed, osInfo, graphics, fsSize, netIfaces, temp, diskCounters] =
     await Promise.all([
-      safe(() => si.cpu(), {} as Awaited<ReturnType<typeof si.cpu>>),
-      safe(() => si.cpuCurrentSpeed(), {} as Awaited<ReturnType<typeof si.cpuCurrentSpeed>>),
-      safe(() => si.osInfo(), {} as Awaited<ReturnType<typeof si.osInfo>>),
-      safe(() => si.graphics(), { controllers: [], displays: [] } as Awaited<
-        ReturnType<typeof si.graphics>
+      collect('cpu', () => si.cpu(), {} as Awaited<ReturnType<typeof si.cpu>>),
+      collect('cpuCurrentSpeed', () => si.cpuCurrentSpeed(), {} as Awaited<
+        ReturnType<typeof si.cpuCurrentSpeed>
       >),
-      safe(() => si.fsSize(), [] as Awaited<ReturnType<typeof si.fsSize>>),
-      safe(() => si.networkInterfaces(), [] as Awaited<
+      collect('osInfo', () => si.osInfo(), {} as Awaited<ReturnType<typeof si.osInfo>>),
+      collect(
+        'graphics',
+        () => si.graphics(),
+        { controllers: [], displays: [] } as Awaited<ReturnType<typeof si.graphics>>,
+      ),
+      collect('fsSize', () => si.fsSize(), [] as Awaited<ReturnType<typeof si.fsSize>>),
+      collect('networkInterfaces', () => si.networkInterfaces(), [] as Awaited<
         ReturnType<typeof si.networkInterfaces>
       >),
-      safe(() => si.cpuTemperature(), { main: -1 } as Awaited<
+      collect('cpuTemperature', () => si.cpuTemperature(), { main: -1 } as Awaited<
         ReturnType<typeof si.cpuTemperature>
       >),
       readDiskCounters(),
     ])
 
   const controllers = asRecords(graphics.controllers)
-  const gpuDynamic = mapGpuDynamic(controllers)
+  const gpuDynamic = mapGpuDynamic(controllers, readMacGpuStats())
   if (gpuDynamic.length > 0) {
     lastGpuMetrics = [...new Set(gpuDynamic.flatMap((g) => g.available))]
   }
@@ -388,7 +507,7 @@ export async function getStaticInfo(force = false): Promise<SystemStaticInfo> {
     },
   }
 
-  staticCache = { at: Date.now(), value }
+  if (failures === 0) staticCache = { at: Date.now(), value }
   return value
 }
 
@@ -417,19 +536,33 @@ export async function collectSnapshot(
   prev: CollectorState,
   gpus: GpuSnapshot[],
 ): Promise<{ snapshot: SystemSnapshot; next: CollectorState }> {
+  // 高频采样：3s 内没回来就当该项不可用，避免拖住下一轮
+  const collect = <T>(label: string, fn: () => Promise<T>, fallback: T) =>
+    safe(fn, fallback, COLLECTOR_TIMEOUTS.sample, label)
+
   const [load, mem, fsSize, netStats, temp, time, processes, users, diskCounters] =
     await Promise.all([
-      safe(() => si.currentLoad(), null as Awaited<ReturnType<typeof si.currentLoad>> | null),
-      safe(() => si.mem(), null as Awaited<ReturnType<typeof si.mem>> | null),
-      safe(() => si.fsSize(), [] as Awaited<ReturnType<typeof si.fsSize>>),
-      safe(() => si.networkStats(), [] as Awaited<ReturnType<typeof si.networkStats>>),
-      safe(() => si.cpuTemperature(), { main: -1 } as Awaited<
+      collect('currentLoad', () => si.currentLoad(), null as Awaited<
+        ReturnType<typeof si.currentLoad>
+      > | null),
+      collect('mem', () => si.mem(), null as Awaited<ReturnType<typeof si.mem>> | null),
+      collect('fsSize', () => si.fsSize(), [] as Awaited<ReturnType<typeof si.fsSize>>),
+      collect('networkStats', () => si.networkStats(), [] as Awaited<
+        ReturnType<typeof si.networkStats>
+      >),
+      collect('cpuTemperature', () => si.cpuTemperature(), { main: -1 } as Awaited<
         ReturnType<typeof si.cpuTemperature>
       >),
       // si.time() 是 systeminformation 中少数几个**同步** API，包一层 async 以复用 safe()
-      safe(async () => si.time(), { current: 0, uptime: 0, timezone: '', timezoneName: '' }),
-      safe(() => si.processes(), { all: 0 } as Awaited<ReturnType<typeof si.processes>>),
-      safe(() => si.users(), [] as unknown[]),
+      collect(
+        'time',
+        async () => si.time(),
+        { current: 0, uptime: 0, timezone: '', timezoneName: '' },
+      ),
+      collect('processes', () => si.processes(), { all: 0 } as Awaited<
+        ReturnType<typeof si.processes>
+      >),
+      collect('users', () => si.users(), [] as unknown[]),
       readDiskCounters(),
     ])
 

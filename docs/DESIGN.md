@@ -140,7 +140,7 @@
 - SQLite 对小 BLOB（< 1MB）读写性能完全够用。
 
 **代价与约束**：
-- 单个图标上限 **512KB**，单张壁纸上限 **5MB**，超限拒绝。
+- 单个图标上限 **512KB**，超限拒绝；壁纸不设体积上限。
 - 需开启 WAL 模式，注意 `-wal` / `-shm` 伴生文件（备份时需一并处理或先 checkpoint）。
 - 数据库文件预期 < 50MB。
 
@@ -172,17 +172,16 @@
 │  │  │  ├ /api/items        │   │  ├ setInterval 1000ms │  │  │
 │  │  │  ├ /api/groups       │   │  ├ RingBuffer(300)    │  │  │
 │  │  │  ├ /api/system/*     │◄──┤  └ SubscriberSet      │  │  │
-│  │  │  ├ /api/probe        │   └───────────────────────┘  │  │
 │  │  │  ├ /api/settings     │   ┌───────────────────────┐  │  │
-│  │  │  └ /* 静态资源        │   │  ProbeService         │  │  │
-│  │  └──────────┬───────────┘   │  ├ TCP 连通性探测      │  │  │
-│  │             │               │  ├ 结果缓存 30s       │  │  │
-│  │             ▼               │  └ SSRF 白名单        │  │  │
-│  │  ┌──────────────────────┐   └───────────────────────┘  │  │
-│  │  │  Drizzle ORM         │   ┌───────────────────────┐  │  │
-│  │  │  └ bun:sqlite        │   │  Embedded Assets      │  │  │
+│  │  │  └ /* 静态资源        │   │  Embedded Assets      │  │  │
 │  │  └──────────┬───────────┘   │  (Vue SPA 产物 / 迁移) │  │  │
 │  │             │               └───────────────────────┘  │  │
+│  │             ▼                                          │  │
+│  │  ┌──────────────────────┐                              │  │
+│  │  │  Drizzle ORM         │                              │  │
+│  │  │  └ bun:sqlite        │                              │  │
+│  │  └──────────┬───────────┘                              │  │
+│  │             │                                          │  │
 │  └─────────────┼──────────────────────────────────────────┘  │
 │                ▼                                             │
 │         data/app.db   data/secret.key                        │
@@ -203,8 +202,8 @@
 | 首次加载 | `GET /` → 嵌入的 `index.html` → SPA 启动 → `GET /api/bootstrap` |
 | 卡片 CRUD | SPA → `/api/items` → Zod 校验 → Drizzle → SQLite → 返回实体 |
 | 监控数据 | `MonitorService` 定时采样 → `GET /api/system/stream` (SSE) → SPA store |
-| 内外网切换 | 用户点开关 → Pinia `network.mode` → `resolveUrl()` 纯函数 → 卡片 URL 响应式更新 |
-| 自动模式探测 | `ProbeService` 周期 TCP 探测 → 缓存 → `GET /api/probe/status` → SPA 读缓存 |
+| 内外网切换 | 用户点开关 → Pinia `network.mode` / `autoMode` → `resolveUrl()` 纯函数 → 卡片 URL 响应式更新 |
+| 自动模式落地 | 面板以 IP / localhost 访问 → 内网；以域名访问 → 外网（`isLanHost` 纯函数） |
 
 ### 3.3 开发期架构
 
@@ -237,13 +236,11 @@ StarM-Panel/
 │   │   │   ├── assets.ts             # 图标/壁纸上传与读取
 │   │   │   ├── favicon.ts            # favicon 抓取与缓存
 │   │   │   ├── system.ts             # /info + /stream (SSE)
-│   │   │   ├── probe.ts
 │   │   │   ├── settings.ts
 │   │   │   ├── backup.ts             # 导入导出
 │   │   │   └── auth.ts               # 可选口令
 │   │   ├── services/
 │   │   │   ├── monitor.ts            # 硬件采集 + 环形缓冲 + 订阅
-│   │   │   ├── probe.ts              # TCP 连通性探测 + 缓存
 │   │   │   └── favicon.ts            # favicon 抓取解析
 │   │   ├── middleware/
 │   │   │   ├── auth.ts
@@ -265,13 +262,12 @@ StarM-Panel/
 │       ├── router/index.ts
 │       ├── api/client.ts             # 类型化 fetch 封装
 │       ├── stores/
-│       │   ├── network.ts            # ★ 全局内外网模式 + 探测状态
+│       │   ├── network.ts            # ★ 全局内外网模式 + 自动模式落地
 │       │   ├── items.ts              # 卡片与分组
 │       │   ├── monitor.ts            # SSE 快照 + 历史
 │       │   └── settings.ts
 │       ├── composables/
 │       │   ├── useMonitorStream.ts   # SSE 订阅（含重连）
-│       │   ├── useProbeStatus.ts
 │       │   └── useDragSort.ts
 │       ├── components/
 │       │   ├── layout/
@@ -379,30 +375,24 @@ assets  (独立，通过 URL 被 items 引用)
 
 | key | 值类型 | 默认 | 说明 |
 |---|---|---|---|
-| `network.mode` | `'lan' \| 'wan' \| 'auto'` | `'lan'` | 全局内外网模式 |
-| `network.autoProbe` | `boolean` | `true` | 自动模式是否启用服务端探测 |
-| `network.probeInterval` | `number` | `30000` | 探测周期 (ms) |
-| `network.probeTimeout` | `number` | `800` | 单次探测超时 (ms) |
+| `network.mode` | `'lan' \| 'wan'` | `'lan'` | 关闭自动选择时的默认模式 |
+| `network.autoMode` | `boolean` | `false` | 是否按访问方式自动选择内外网 |
 | `theme.mode` | `'light' \| 'dark' \| 'system'` | `'system'` | |
 | `theme.accent` | `string` | `'#6366f1'` | 主题色 |
-| `theme.blur` | `number` | `12` | 卡片毛玻璃模糊半径 (px) |
-| `wallpaper.type` | `'none' \| 'solid' \| 'gradient' \| 'asset' \| 'bing'` | `'gradient'` | |
+| `wallpaper.type` | `'solid' \| 'gradient' \| 'asset' \| 'bing'` | `'gradient'` | |
 | `wallpaper.value` | `string \| null` | `null` | 颜色值 / asset URL |
 | `search.engines` | `SearchEngine[]` | 内置 4 个 | |
 | `search.defaultEngine` | `string` | `'bing'` | |
 | `monitor.interval` | `number` | `1000` | 采样间隔 (ms) |
 | `monitor.hiddenInterval` | `number` | `10000` | 无订阅者时的采样间隔 (ms) |
-| `monitor.disks` | `string[]` | `[]` | 关注的挂载点白名单，空 = 全部 |
-| `monitor.netIfaces` | `string[]` | `[]` | 关注的网卡白名单，空 = 全部 |
-| `monitor.gpuEnabled` | `boolean` | `true` | 是否采集 GPU 指标 |
 | `monitor.gpuInterval` | `number` | `3000` | GPU 采样间隔 (ms)，比 CPU 慢（见 7.3） |
-| `monitor.cards` | `string[]` | `['cpu','memory','disk','network','gpu','system']` | ★ 首页「系统状态」区展示哪些硬件卡片，**数组顺序即展示顺序**；`disk` 按挂载点展开成多张 |
+| `monitor.cards` | `({ kind, device? })[]` | 全部 kind（自动） | ★ 首页「系统状态」区展示哪些硬件卡片，**数组顺序即展示顺序**。条目 = `{ kind, device? }`：`device` 缺省为「自动」条目（兼容旧版纯字符串值），按当前设备展开成多张；显式条目则一台设备一张卡。设备维度：`disk` = 挂载点、`network` = 网卡名、`gpu` = 设备序号，`cpu`/`memory`/`system` 整机唯一。由首页「添加卡片」位**按设备**增删、拖拽卡片排序（不再走设置页） |
 | `auth.enabled` | `boolean` | `false` | |
 | `auth.passwordHash` | `string \| null` | `null` | argon2id hash |
 | `ui.showMonitor` | `boolean` | `true` | 是否显示监控区（旧侧栏方案遗留，见 §10.6） |
 | `ui.showClock` | `boolean` | `true` | 首页主标题旁是否显示时钟 |
 | `ui.title` | `string` | `''` | 首页主标题文案，留空显示 `StarM Panel` |
-| `ui.cardSize` | `'sm' \| 'md' \| 'lg'` | `'md'` | |
+| `ui.cardSize` | `'sm' \| 'md' \| 'lg'` | `'md'` | 应用卡片与「系统状态」硬件卡片共用的尺寸：决定网格最小列宽与卡片内距 |
 | `version` | `number` | `1` | 配置结构版本，用于迁移 |
 
 #### `assets` — 上传的二进制资源
@@ -420,13 +410,13 @@ assets  (独立，通过 URL 被 items 引用)
 索引：`idx_assets_kind (kind)`
 
 **去重**：`id` 为内容哈希，相同内容重复上传自动复用。
-**上限**：`icon` / `favicon` ≤ 512KB；`wallpaper` ≤ 5MB。
+**上限**：`icon` / `favicon` ≤ 512KB；`wallpaper` 不设限。
 
 ### 5.3 TypeScript 类型（`src/shared/types.ts`）
 
 ```ts
 export type NetworkPref = 'auto' | 'lan' | 'wan'
-export type NetworkMode = 'lan' | 'wan' | 'auto'
+export type NetworkMode = 'lan' | 'wan'
 export type OpenMode = 'newTab' | 'iframe' | 'self'
 export type IconType = 'iconify' | 'asset' | 'text' | 'favicon'
 
@@ -486,11 +476,14 @@ PRAGMA temp_store = MEMORY;
 
 这是本项目最核心的功能，单独成章。
 
-### 6.1 三层优先级模型
+### 6.1 两层优先级模型
 
 ```
-卡片级 network_pref  >  全局 network.mode  >  探测结果（仅 auto 时）
+卡片级 network_pref  >  全局 network.autoMode / network.mode
 ```
+
+`network.autoMode` 开启时，生效模式由前端按**面板自身的访问方式**判定成具体的
+`lan` / `wan`（见 §6.4）；关闭时使用 `network.mode`。全程不依赖任何服务端探测。
 
 ### 6.2 解析算法（`src/shared/resolve-url.ts`）
 
@@ -498,10 +491,8 @@ PRAGMA temp_store = MEMORY;
 import type { Item, NetworkMode } from './types'
 
 export interface ResolveContext {
-  /** 全局模式 */
+  /** 已落地的具体模式：自动模式由调用方按访问方式（isLanHost）先解析再传入 */
   mode: NetworkMode
-  /** 自动模式下：该卡片内网地址是否可达（来自服务端探测缓存） */
-  lanReachable?: boolean
 }
 
 export type ResolveSource = 'lan' | 'wan' | 'fallback' | 'none'
@@ -529,27 +520,14 @@ export function resolveUrl(item: Item, ctx: ResolveContext): ResolvedUrl {
     return { url: null, source: 'none' }
   }
 
-  // 2. 全局模式
+  // 2. 全局模式（auto 已由调用方落地成 lan / wan）
   if (ctx.mode === 'lan') {
     if (lanUrl) return { url: lanUrl, source: 'lan' }
     if (wanUrl) return { url: wanUrl, source: 'fallback' }
     return { url: null, source: 'none' }
   }
-  if (ctx.mode === 'wan') {
-    if (wanUrl) return { url: wanUrl, source: 'wan' }
-    if (lanUrl) return { url: lanUrl, source: 'fallback' }
-    return { url: null, source: 'none' }
-  }
-
-  // 3. 全局 auto —— 用探测结果决定，探测未知时保守选 wan
-  const useLan = ctx.lanReachable === true
-  if (useLan) {
-    if (lanUrl) return { url: lanUrl, source: 'lan' }
-    if (wanUrl) return { url: wanUrl, source: 'fallback' }
-  } else {
-    if (wanUrl) return { url: wanUrl, source: 'wan' }
-    if (lanUrl) return { url: lanUrl, source: 'fallback' }
-  }
+  if (wanUrl) return { url: wanUrl, source: 'wan' }
+  if (lanUrl) return { url: lanUrl, source: 'fallback' }
   return { url: null, source: 'none' }
 }
 ```
@@ -564,21 +542,34 @@ export function resolveUrl(item: Item, ctx: ResolveContext): ResolvedUrl {
 ```ts
 // src/web/stores/network.ts
 export const useNetworkStore = defineStore('network', () => {
-  const mode = ref<NetworkMode>('lan')
-  const probeStatus = ref<Record<number, boolean>>({})   // itemId -> lanReachable
+  const settings = useSettingsStore()
+  const mode = ref<NetworkMode>(readLocalMode())   // 初值来自 localStorage
 
-  /** 卡片解析结果，随 mode / probeStatus / items 自动重算 */
+  /** 是否按访问方式自动选择 —— 单一事实来源是 settings store */
+  const autoMode = computed(() => settings.get('network.autoMode'))
+
+  const effectiveMode = computed<NetworkMode>(() => {
+    if (!autoMode.value) return mode.value
+    return isLanHost(window.location.hostname) ? 'lan' : 'wan'
+  })
+
+  /** 卡片解析结果，随 mode / autoMode / items 自动重算 */
   function resolve(item: Item): ResolvedUrl {
-    return resolveUrl(item, { mode: mode.value, lanReachable: probeStatus.value[item.id] })
+    return resolveUrl(item, { mode: effectiveMode.value })
   }
 
-  async function setMode(next: NetworkMode) {
+  function setMode(next: NetworkMode) {
+    // 先同步写 localStorage（立即生效、离线可用），再异步 PATCH，失败不回滚
+    writeLocalMode(next)
     mode.value = next
-    localStorage.setItem('starm.network.mode', next)
-    await api.patchSettings({ 'network.mode': next }).catch(() => {})  // 失败不阻塞 UI
+    void api.settings.patch({ 'network.mode': next }).catch(() => {})
   }
 
-  return { mode, probeStatus, resolve, setMode }
+  function setAutoMode(next: boolean) {
+    void settings.patch({ 'network.autoMode': next })
+  }
+
+  return { mode, autoMode, effectiveMode, resolve, setMode, setAutoMode, syncFromServer }
 })
 ```
 
@@ -588,71 +579,34 @@ export const useNetworkStore = defineStore('network', () => {
 
 启动顺序：先用 `localStorage` 渲染 → `GET /api/bootstrap` 返回服务端值 → 若不一致以服务端为准（并回写 localStorage）。
 
-### 6.4 服务端探测（自动模式）
+### 6.4 自动模式的落地（按访问方式判定）
 
-**为什么必须放服务端**（三个不可绕过的原因）：
+开启 `network.autoMode` 时，不依赖任何后端探测，而是在前端按**面板自身是怎么被访问的**落地：
 
-1. **混合内容拦截**：面板若以 https 提供服务，浏览器会直接阻断页面内对 http 内网地址的任何请求。服务端无此限制。
-2. **弹窗拦截**：前端「先探测再打开」会引入延迟，`window.open` 在非用户手势调用栈中会被浏览器判定为恶意弹窗而拦截。服务端预先算好结果，点击时同步打开。
-3. **CORS**：跨源探测内网地址必然被 CORS 拦住，且内网设备通常不返回 CORS 头。
-
-**探测方式**：TCP 连接探测，而非 HTTP 请求。
+| 访问主机 | 落地模式 | 说明 |
+|---|---|---|
+| IPv4 字面量（任意） | 内网 | `192.168.x.x`、`10.x.x.x`、`8.8.8.8` … |
+| IPv6 字面量（含 `::1` / `::`） | 内网 | 域名不可能含冒号，含冒号即为 IPv6 字面量 |
+| `localhost` / `*.localhost` | 内网 | 本机访问 |
+| 其余（域名） | 外网 | 反向代理 / 公网域名 |
 
 ```ts
-// src/server/services/probe.ts
-async function probeTcp(host: string, port: number, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => { socket.end(); resolve(false) }, timeoutMs)
-    const socket = Bun.connect({
-      hostname: host,
-      port,
-      socket: {
-        open(s) { clearTimeout(timer); s.end(); resolve(true) },
-        error()  { clearTimeout(timer); resolve(false) },
-        data()   {},
-        close()  {},
-      },
-    }).catch(() => { clearTimeout(timer); resolve(false) })
-  })
+// src/shared/resolve-url.ts
+export function isLanHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === '') return false
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (ipv4) return ipv4.slice(1).map(Number).every((n) => n <= 255)
+  return host.includes(':')   // IPv6 字面量
 }
 ```
 
-**理由**：TCP 连通性足以判断「我在不在这个内网」，且**不要求目标返回 HTTP 响应**（很多内网设备只开端口）。成本远低于 HTTP 请求。
-
-端口推导：URL 显式端口 > scheme 默认端口（http→80, https→443）。
-
-**调度**：
-- 每 `network.probeInterval`（默认 30s）对全部「配置了 lanUrl 且 network_pref ≠ 'wan'」的卡片并发探测。
-- 并发上限 8，带 ±20% 抖动，避免同刻冲击网络。
-- 结果写入 `Map<itemId, { reachable: boolean; checkedAt: number }>`。
-- 卡片增删改时立即触发该卡片的单次探测。
-
-**SSRF 防护**（关键安全约束）：
-
-探测接口本质是一个「让服务器去连接任意地址」的能力，必须限制：
-
-```ts
-const PRIVATE_RANGES = [
-  '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',   // RFC1918
-  '127.0.0.0/8', '169.254.0.0/16',                    // loopback / link-local
-  '100.64.0.0/10',                                    // CGNAT
-  'fc00::/7', 'fe80::/10', '::1/128',                 // IPv6 私有
-]
-
-function isProbeAllowed(rawUrl: string): boolean {
-  const u = new URL(rawUrl)
-  if (!['http:', 'https:'].includes(u.protocol)) return false
-  const host = u.hostname
-  // 允许：私有网段 IP、.local mDNS、无点的主机名（如 nas、router）
-  if (host.endsWith('.local')) return true
-  if (!host.includes('.')) return true
-  if (isIP(host)) return inRange(host, PRIVATE_RANGES)
-  // 域名：解析后校验 IP（防 DNS rebinding 需二次校验，见风险登记册）
-  return isPrivateDomainResolved(host)
-}
-```
-
-**被拒绝的探测请求**：返回 `{ reachable: null, reason: 'blocked' }`，前端将该卡片视为不可达，回退到外网地址。
+**为什么不做服务端探测**：早期版本曾用 `ProbeService` 周期 TCP 探测各卡片的内网
+地址，但探测结果与「我在不在内网」并不等价 —— 内网地址可能是域名、设备可能只开
+ICMP、https 面板还会被浏览器以混合内容为由阻断探测请求，且引入 SSRF 攻击面与常驻
+后台任务。改为按访问方式判定后逻辑完全前移到 `isLanHost` 纯函数：零 IO、零后台任务、
+可单测，也彻底移除了 SSRF 风险。
 
 ### 6.5 顶栏开关交互
 
@@ -663,7 +617,7 @@ function isProbeAllowed(rawUrl: string): boolean {
 ```
 
 - **分段控件**（segmented control）三态：内网 / 外网 / 自动。
-- 每个按钮带状态点：绿 = 探测可达，灰 = 不可达，无点 = 未探测（自动模式）。
+- 「自动」选项按面板的访问方式实时落地，不依赖任何后端探测。
 - 键盘快捷键：`Ctrl/Cmd + Shift + N` 循环切换。
 - 切换时若存在打开的 iframe 小窗，弹出提示条：「网络模式已切换，N 个内嵌窗口需要重载」+「全部重载」按钮。
 - 卡片角标：当实际使用的 URL 与全局模式不一致（例如全局内网但该卡片回退到外网），在卡片右上角显示来源标记。
@@ -672,9 +626,7 @@ function isProbeAllowed(rawUrl: string): boolean {
 
 | 限制 | 说明 | 缓解 |
 |---|---|---|
-| 卡片地址含内网 IP 时探测才有效 | 若内网地址也是公网域名，探测等于判断该域名的可达性 | 文档说明 |
-| DNS rebinding | 域名解析后校验 IP，但解析与连接之间存在 TOCTOU 窗口 | 解析后直接用 IP 连接（`Bun.connect` 传 IP + `Host` 头） |
-| 目标端口关闭但服务可用 | 极少数设备仅 ICMP 可达 | 提供卡片级「强制使用内网」手动覆盖 |
+| 以 IP 访问但实际经公网 | 只要访问主机是 IP 就判为内网，不区分该 IP 是否可路由 | 需要精确控制时改用卡片级 `network_pref` 或手动切换 |
 | iframe 内嵌被拦 | 目标站点 `X-Frame-Options: DENY` / CSP `frame-ancestors` | 打开前服务端 HEAD 预检，命中则提示改用新窗口 |
 
 ---
@@ -696,7 +648,7 @@ function isProbeAllowed(rawUrl: string): boolean {
 | 网络 | 各网卡上下行速率 | `si.networkStats()` | 每次采样（需差分） |
 | 网络 | 累计收发字节 | `si.networkStats()` | 每次采样 |
 | GPU | 厂商、型号、驱动版本、显存总量 | `si.graphics()` | 启动 + 300s |
-| GPU | 使用率、显存已用/空闲、温度、功耗、风扇转速、核心/显存频率 | `si.graphics()` | 3s（独立于主循环，见 7.3） |
+| GPU | 使用率、显存已用/空闲、温度、功耗、风扇转速、核心/显存频率 | `si.graphics()`（macOS 额外用 `ioreg` 补使用率与已用共享内存，见 §7.3） | 3s（独立于主循环，见 7.3） |
 | GPU | 显示器列表（型号、分辨率、刷新率、连接方式） | `si.graphics()` | 启动 + 300s |
 | 系统 | OS、内核、架构、主机名 | `si.osInfo()` | 启动 |
 | 系统 | 运行时长 | `si.time().uptime` | 每次采样 |
@@ -835,6 +787,7 @@ class MonitorService {
 - **速率靠差分**：`si.disksIO()` 与 `si.networkStats()` 返回的是累计计数器，需与上次采样做差除以时间间隔。
 - **首次采样**只记录基线，速率字段为 0。
 - **失败隔离**：任何一项 `si.*` 调用失败只影响该字段（置 `null` 或空数组），不中断整轮采样。
+- **超时即失败**：卡死（既不 resolve 也不 reject）与抛异常同等对待 —— `safe()` 给每项采集套超时，静态信息 10s、高频采样 3s，超时同样降级为 fallback。没有这层预算的话，进程级资源耗尽（如 fd 打满）会让 `/api/system/info` 永久挂起，前端「关于」页整块空白（实测故障）。超时只是**放弃等待**，不中断底层调用，所以主循环与 GPU 采样器都必须有「同一轮不叠加执行」的守卫（`sampling` / `gpuSampling`）；`gpu-macos.ts` 的 `Bun.spawnSync` 是同步调用，天然不受超时保护（已知残留风险）。
 
 #### GPU 采集的独立性（重要）
 
@@ -865,7 +818,6 @@ class GpuSampler {
   start() { this.timer = setInterval(() => void this.tick(), interval) }
 
   private async tick() {
-    if (!settings.get('monitor.gpuEnabled')) return
     // 无订阅者时跳过（GPU 无历史价值，不需要为了"回来时有数据"而空转）
     if (monitor.subscriberCount === 0) return
     const g = await si.graphics()
@@ -883,8 +835,8 @@ class GpuSampler {
 | 指标 | NVIDIA (Linux/Win) | AMD (Linux, rocm-smi) | Intel 核显 | Apple Silicon (macOS) | 树莓派 VideoCore |
 |---|---|---|---|---|---|
 | 型号 / 显存总量 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 使用率 | ✅ | ✅ | ❌ | ❌ | ❌ |
-| 显存已用 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 使用率 | ✅ | ✅ | ❌ | ✅ | ❌ |
+| 显存已用 | ✅ | ✅ | ❌ | ⚠️ 仅已用¹ | ❌ |
 | 温度 | ✅ | ✅ | ❌ | ❌ | ✅ |
 | 功耗 | ✅ | ⚠️ 部分 | ❌ | ❌ | ❌ |
 | 风扇转速 | ✅ | ⚠️ 部分 | ❌ | ❌ | ❌ |
@@ -892,8 +844,11 @@ class GpuSampler {
 
 > **结论**：GPU 监控的完整度**高度依赖平台和厂商驱动**，只有 NVIDIA + 官方驱动这一组合能拿到全套指标。因此：
 > - 设计上必须容忍「有 GPU 但只有型号、没有任何动态指标」的情况，此时 UI 只显示一张静态的 GPU 信息卡（型号 + 显存 + 驱动版本），不显示图表。
-> - macOS 上（本项目的主要开发环境）**拿不到任何动态 GPU 指标**，这是 Apple 不暴露该接口所致，非代码问题。开发期须依靠 `available` 数组为空来验证降级路径。
-> - 前端 `GpuPanel.vue` 的渲染逻辑：`available.length === 0` → 静态卡片；否则按 `available` 动态决定显示哪些 gauge。
+> - macOS 上 `systeminformation` 不返回任何动态字段，但 **IORegistry 的 `IOAccelerator.PerformanceStatistics` 有** `Device Utilization %`（使用率）与 `In use system memory`（已用显存）。因此额外用系统自带的 `ioreg`（约 30ms）补齐这两项，见 `services/gpu-macos.ts`；温度 / 功耗 / 风扇 / 频率仍然拿不到。
+> - 仍然必须容忍「有 GPU 但零动态指标」的情况（如未装驱动的核显、受限容器），此时 UI 只显示一张静态 GPU 信息卡。
+> - 前端 `SystemStatDetail.vue` 的渲染逻辑：`available.length === 0` → 静态卡片；否则按 `available` 动态决定显示哪些指标。
+>
+> ¹ Apple Silicon 为统一内存，无固定显存上限，因此只上报「已用」（`memoryTotal: null`），卡片与弹窗只显示已用值。该字段在 `available` 中仍然算 `memory`。
 
 
 ### 7.4 SSE 推送
@@ -951,6 +906,15 @@ app.get('/api/system/stream', (c) => {
 | 树莓派 | VideoCore GPU 需 `vcgencmd`，仅温度与频率可用 | 尽力而为 |
 | Windows | 大部分指标可用，网卡速率需注意；GPU 走 WMI + nvidia-smi | 尽力而为 |
 
+> **开发期坑（macOS + `bun --watch` / `--hot`）**：`systeminformation` 会 `require` 两个可选
+> 原生依赖（`osx-temperature-sensor` / `macos-temperature-sensor`）读温度。本项目按 ADR-001
+> 不装原生依赖，而 Bun 在 watch / hot 模式下**模块解析失败**时每次会泄漏一个目录 fd
+> （`si.cpuTemperature()` 2 个、`si.graphics()` 1 个，合计约 2.3 个/秒）。fd 打满后 `si.*`
+> 既不 resolve 也不 reject，静态信息整块降级成空 —— 表现是首页只剩 CPU / RAM / SYS 三张卡、
+> 「添加卡片」没有任何设备候选。仓库在 `vendor/si-optional-stubs/` 放了两个纯 JS 占位模块，
+> 以 `file:` 依赖安装，让 require 解析成功、从根上不触发这条路径。
+> 另外静态信息只在**本轮零失败**时才进 5 分钟缓存，避免一次资源耗尽把空设备清单钉住 5 分钟。
+
 ---
 
 ## 8. API 契约
@@ -982,14 +946,13 @@ app.get('/api/system/stream', (c) => {
 | `PATCH` | `/api/items/:id` | 部分更新 |
 | `DELETE` | `/api/items/:id` | 删除 |
 | `POST` | `/api/items/reorder` | 批量重排（含跨分组） |
-| `POST` | `/api/items/:id/test` | 立即探测该卡片的内网地址 |
 
 **`POST /api/items` 请求体**（`ItemCreateSchema`）：
 
 ```ts
 {
   groupId: number | null,
-  title: string,                    // 1-64 字符
+  title: string,                    // 1-24 字符（再长卡片上会省略号截断）
   subtitle?: string | null,         // ≤ 128
   iconType: 'iconify' | 'asset' | 'text' | 'favicon',
   iconValue?: string | null,
@@ -1058,7 +1021,7 @@ app.get('/api/system/stream', (c) => {
 2. 找不到则回退 `GET /favicon.ico`。
 3. 校验响应是图片类型且 ≤ 512KB。
 4. 存为 `assets.kind = 'favicon'`，内容哈希去重。
-5. 全流程 5s 超时，同样受 SSRF 白名单约束（但与探测不同，**favicon 抓取应允许任意公网域名**，因为外网地址可能指向公网站点）。
+5. 全流程 5s 超时；只允许 http/https，拒绝链路本地 / 云元数据端点（`169.254.0.0/16`、`metadata.google.internal`、`*.internal`），其余（含公网域名）均可抓取。
 
 **缓存策略**：以源站 host 为键查缓存（`settings` 或 `assets.name` 记录来源），命中直接返回，避免重复抓取。
 
@@ -1070,28 +1033,21 @@ app.get('/api/system/stream', (c) => {
 | `GET` | `/api/system/stream` | SSE 流，事件 `snapshot` / `ping` |
 | `GET` | `/api/system/history` | 当前环形缓冲全量（用于页面重新聚焦时补齐） |
 
-### 8.8 探测
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `GET` | `/api/probe/status` | `{ [itemId: string]: { reachable: boolean \| null; checkedAt: number } }` |
-| `POST` | `/api/probe/refresh` | 立即触发全量探测 |
-
-### 8.9 设置
+### 8.8 设置
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/api/settings` | 全部设置 |
 | `PATCH` | `/api/settings` | 部分更新，`{ [key]: value }` |
 
-### 8.10 备份
+### 8.9 备份
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/api/backup/export` | 导出 JSON（含分组、卡片、设置、可选内嵌资源 base64） |
 | `POST` | `/api/backup/import` | 导入，`?mode=merge\|replace` |
 
-### 8.11 口令（可选）
+### 8.10 口令（可选）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -1102,7 +1058,7 @@ app.get('/api/system/stream', (c) => {
 
 **实现**：`Bun.password.hash(pw, { algorithm: 'argon2id' })` + 签名 Cookie（密钥为 `data/secret.key`，首次启动生成 32 随机字节，`chmod 600`）。登录失败限流：每 IP 每分钟 5 次。
 
-### 8.12 其他
+### 8.11 其他
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -1309,7 +1265,7 @@ import { assets } from '../generated/assets'
 
 | Store | 状态 | 说明 |
 |---|---|---|
-| `network` | `mode`, `probeStatus`, `resolve()` | ★ 内外网切换核心 |
+| `network` | `mode`, `autoMode`, `effectiveMode`, `resolve()` | ★ 内外网切换核心 |
 | `items` | `groups`, `items`, CRUD actions | 乐观更新 + 失败回滚 |
 | `monitor` | `latest`, `history[300]`, `connected` | SSE 快照与趋势 |
 | `settings` | 全部配置项 | 与 `/api/settings` 同步 |
@@ -1335,7 +1291,7 @@ App.vue                              # 外壳：NConfigProvider 主题同步 + �
 │   │   └─ ItemCard.vue              #   与硬件卡片同一视觉语言
 │   └─ GroupSection.vue  (未分组)
 ├─ CardEditor.vue                    # 新增/编辑卡片弹窗
-│   ├─ 图标选择器（图标库 / 上传 / 文字 / 抓取 四个标签页）
+│   ├─ 图标选择器（上传 / 文字 / 抓取 / 图标库 一级菜单，动作在预览框上）
 │   └─ 内外网双地址 + 网络偏好 + 打开方式
 ├─ EmbedLayer.vue                    # iframe 内嵌小窗层
 └─ BootNotice.vue                    # 启动/错误提示
@@ -1348,24 +1304,40 @@ App.vue                              # 外壳：NConfigProvider 主题同步 + �
 | `cpu` | 总使用率 + 进度条 | 每核心条形、负载 1/5/15、温度（无则隐藏）、型号与核心数 |
 | `memory` | 已用/总量 + 进度条 | 已用/空闲/可用/交换、分段条 |
 | `disk` | 每个挂载点一张：已用/总量 + 进度条 | 容量、文件系统、设备名、读写速率 |
-| `network` | 各网卡上下行速率 | 累计流量、IP/MAC/链路速率 |
-| `gpu` | 使用率（无动态指标时只显示型号） | `available` 驱动，无指标则显示提示文案 |
+| `network` | 每块网卡一张：上下行速率 | 累计流量、IP/MAC/链路速率 |
+| `gpu` | 每块 GPU 一张：使用率（无动态指标时只显示型号） | `available` 驱动，无指标则显示提示文案 |
 | `system` | 运行时长 | 主机名/发行版/内核/架构/进程数/用户数 |
 
 ### 10.4 交互细节
 
+**硬件卡片**：
+- 单击 → 打开详情弹窗。
+- 分区标题「系统状态」悬停时浮现隐藏的「编辑」开关，点击进入编辑模式。
+- 编辑模式下：卡片右上角显示移除角标（点击移除**该设备**这一张卡，移除前弹 `useDeleteConfirm` 确认弹窗，可在「添加卡片」重新加回），可直接拖拽卡片调整顺序（按设备粒度）；末尾「添加卡片」位浮层**逐台列出可添加的设备**（如「磁盘 /data」「网卡 eth0」「GPU #1」），点一下即追加。
+- `monitor.cards` 中的「自动」条目（旧值 / 默认值，无 `device`）仍按设备展开，且跳过已被显式条目占用的设备；对自动展开出来的卡片做移除 / 拖拽时，先把该类型物化成显式设备条目，保持行为可预测。
+- 「添加卡片」位仅在**编辑模式或暂无卡片**时出现，其余时候不占位。
+- 非编辑模式不显示任何操作图标，界面保持干净。
+- `gpu` 在无 GPU 设备时整卡跳过，添加浮层里也会置灰。
+
 **卡片**：
 - 单击 → 按 `openMode` 打开解析后的 URL。
-- 右键 / 悬停 `⋮` → 上下文菜单（编辑 / 复制链接 / 复制另一网络地址 / 删除）。
-- 右上角角标显示实际使用的网络来源（当与全局模式不一致时）。
-- `networkPref` 非 `auto` 的卡片显示小锁图标，提示「已固定」。
+- 右键 → 上下文菜单（编辑 / 复制链接 / 在新窗口打开）。删除只从编辑模式的移除角标与卡片编辑器里发起，右键菜单不提供删除。默认不显示常驻操作图标。
+- 删除卡片一律走 `/composables/useDeleteConfirm.ts` 的应用内弹窗确认（标题 + 「删除后无法恢复」提示），取消则不发请求；卡片编辑器在 `NPopconfirm`（一级）之后还会再弹一次该弹窗（二级确认）。
+- 「APP」分区标题悬停时浮现隐藏的「编辑」开关；编辑模式下卡片右上角显示移除角标，且单击卡片改为打开编辑器（不跳转链接）。
+- 「新建卡片」位（分组标题旁的 + 与网格末尾的卡片位）仅在**编辑模式或该分组暂无卡片**时出现。
+- 与全局模式不一致时才显示来源角标（如「内网」「外网」）；`networkPref` 非 `auto` 的卡片显示小锁图标，提示「已固定」。
 
-**图标选择器**（`IconPicker.vue`）：
-四个标签页：
-1. **图标库** — 搜索 + 虚拟滚动，数据来自本地打包的 Iconify 集合。
-2. **上传** — 拖拽或选择文件，≤ 512KB，自动去重。
-3. **文字** — 输入 1–2 个字符（支持 emoji），配前景色 + 背景色。
-4. **抓取** — 输入网址，调 `/api/favicon`。
+**图标选择器**（在 `CardEditor.vue` 内，`FaviconGlyph.vue` 负责离线渲染）：
+一级菜单选来源（上传 / 文字 / 抓取 / 图标库），四种来源的动作统一由左侧预览框触发，
+控件全部塞在「一级菜单 + 预览行」里，因此切来源不会改变弹窗高度：
+
+1. **图标库** — 点预览框弹出图标列表（10 组 247 个）带搜索。数据是**本地常量**：
+   构建期从 Iconify 的 `mdi` + `simple-icons` 取单 path 图标，内联进 `FaviconGlyph` 的 `GLYPHS`，
+   运行时不联网；未收录的名字按名称哈希出几何字形兑底（同一名字永远同一形状）。
+2. **上传** — 预览框是「+」，点击选文件；单文件 ≤ 256KB，优先 `POST /api/assets`，失败回落 dataURL。
+3. **文字** — 取标题首字符（支持 emoji），前景/背景取色器并进预览行（带透明度滑块，色块里不显示色值）。
+4. **抓取** — 按选中的「内网 / 外网」地址调 `/api/favicon`（内网优先，按钮只切来源不发请求）；
+   抓不到直接报错，**不写任何占位地址**。
 
 **拖拽排序**：`vue-draggable-plus`，跨分组拖拽，`onEnd` 时收集完整顺序调 `/api/items/reorder`。乐观更新 + 失败回滚。
 
@@ -1420,7 +1392,7 @@ App.vue                              # 外壳：NConfigProvider 主题同步 + �
 | 硬件信息不再有专属侧栏 | 与 App 卡片共用同一个网格与卡片语言，信息层级扁平 |
 | 卡片只显示「一眼可读」的一个数值 + 进度条 | 详情收进弹窗，避免首页噪音 |
 | **点击卡片弹出详情弹窗** | 每核心 CPU、磁盘 IO、网卡明细、系统静态信息等都在弹窗内 |
-| 展示哪些卡片可配置 | `monitor.cards`（数组顺序 = 展示顺序）；`disk` 按挂载点展开 |
+| 展示哪些卡片在首页直接增删 | `monitor.cards`（数组顺序 = 展示顺序）；分区标题悬停显示「编辑」开关，编辑模式下末尾「添加卡片」位**按设备**新增、卡片右上角按设备移除、按设备拖拽排序（`disk` 挂载点 / `network` 网卡 / `gpu` 设备序号） |
 | 常驻顶栏改为右上浮动按钮组 | 减少视觉重量，让英雄区成为视觉焦点 |
 | 移除了 `MonitorPanel.vue` 的侧栏用法 | 内部渲染逻辑拆入详情弹窗复用 |
 | `ui.showClock` / `ui.title` | 英雄区可按用户偏好定制 |
@@ -1503,11 +1475,10 @@ starm-panel [options]
 ### M2 — 内外网切换（1.5 天）★ 核心功能
 
 - `shared/resolve-url.ts` + 单元测试（覆盖全部 3×3 优先级矩阵）
-- `network` store + 顶栏分段控件
-- `ProbeService`（TCP 探测 + SSRF 白名单 + 缓存）
+- `network` store + 顶栏分段控件（`network.autoMode` 开启时按访问方式落地）
 - 卡片来源角标 + iframe 切换提示
 
-**验收**：全局切换到外网模式，所有卡片立即使用 `wanUrl`；卡片级固定为内网的卡片不受影响；自动模式在拔掉内网网线后 30s 内全部回退到外网地址。
+**验收**：全局切换到外网模式，所有卡片立即使用 `wanUrl`；卡片级固定为内网的卡片不受影响；以域名访问面板时 `auto` 落地为外网，以 IP 访问时落地为内网。
 
 ### M3 — 硬件监控（2.5 天）
 
@@ -1549,15 +1520,13 @@ starm-panel [options]
 | R5 | 交叉编译（macOS → Linux）产物在目标机无法启动 | 中 | 高 | M0 阶段在真实目标机上验证；退路：在目标机或 CI（Linux runner）上原生构建 |
 | R6 | macOS 无法获取 CPU 温度 | 高 | 低 | `temp` 字段设为 `null`，UI 自动隐藏该指标 |
 | R7 | 非 root / 容器中读不到完整系统信息 | 高 | 中 | 提供 `--proc-root` 参数；文档给出挂载示例；字段级降级 |
-| R8 | SSRF：探测接口被用于扫描内网 | 中 | 高 | 严格白名单（仅私有网段 + `.local` + 无点主机名）；域名解析后校验 IP；限制并发与频率 |
-| R9 | DNS rebinding 绕过探测白名单 | 低 | 中 | 解析后用 IP 直连（`Bun.connect` 传 IP），不经二次 DNS |
 | R10 | Iconify 图标集体积导致前端产物过大 | 高 | 低 | 只收录 2–3 个集合；提供上传 SVG 作为无限扩展手段 |
 | R11 | iframe 打开被目标站 `X-Frame-Options` 拦截，表现为白屏 | 高 | 中 | 打开前服务端 HEAD 预检 `X-Frame-Options` / `frame-ancestors`；命中则提示改用新窗口 |
 | R12 | SQLite WAL 伴生文件导致备份不完整 | 中 | 中 | 导出接口在事务内读取；文档说明备份需先 `PRAGMA wal_checkpoint(TRUNCATE)` |
 | R13 | Bun 版本升级引入回归 | 中 | 中 | 固定 `packageManager` 字段；二进制内置运行时，升级需显式重新构建 |
 | R14 | 用户本机 `~/.npm` 权限异常导致依赖安装失败（已实测） | — | 低 | 使用 Bun 安装依赖（`bun install`）不走 npm；必要时修复 `~/.npm` 属主 |
 | R15 | GPU 指标在不同厂商/平台差异极大，用户期望与实际严重不符 | 高 | 中 | `available` 数组驱动 UI；`available` 为空时只显示静态信息卡；文档给出可得性矩阵（§7.3） |
-| R16 | `si.graphics()` 每次调用 spawn `nvidia-smi`，高频采样拖垮低功耗设备 | 中 | 中 | **独立 3s 采样器**，不跟随 1s 主循环；无订阅者时直接跳过；`monitor.gpuEnabled` 可关闭 |
+| R16 | `si.graphics()` 每次调用 spawn `nvidia-smi`，高频采样拖垮低功耗设备 | 中 | 中 | **独立 3s 采样器**，不跟随 1s 主循环；无订阅者时直接跳过 |
 | R17 | NVIDIA 驱动未装时 `nvidia-smi` 缺失，采集抛异常 | 中 | 低 | 启动时探测并记 warn；异常被字段级失败隔离吞掉，不影响其他指标 |
 
 ---
@@ -1588,7 +1557,7 @@ starm-panel [options]
 | 数据库 | SQLite | SQLite（`bun:sqlite`） |
 | 分发 | Docker 镜像 / Go 二进制 | 单文件可执行（交叉编译） |
 | 多用户 | 支持 | ❌ 刻意不做 |
-| 内外网切换 | 全局开关 + 卡片双地址 + 自动探测 | 同左，但**解析逻辑抽为共享纯函数**、探测走 TCP、带 SSRF 白名单 |
+| 内外网切换 | 全局开关 + 卡片双地址 + 自动探测 | 同左，但**解析逻辑抽为共享纯函数**、可选的「按访问方式（IP/域名）自动选择」、零探测零后台任务 |
 | 图标 | Iconify API / 内置 | 离线打包 Iconify + 上传 + favicon 抓取 |
 | 系统监控 | 有 | 有（SSE 推送 + 环形缓冲 + 无订阅降频） |
 | 资源占用 | Go 二进制约 25MB | 单文件约 60–70MB（代价：单文件零依赖分发） |
@@ -1673,11 +1642,11 @@ RUN apk add --no-cache libstdc++
 
 ```json
 { "vendor": "apple", "model": "Apple M2", "vramDynamic": true,
-  "utilization": null, "temperature": null, "powerDraw": null,
-  "available": [] }
+  "utilization": 7, "memoryUsed": 453443584, "memoryTotal": null,
+  "available": ["utilization", "memory"] }
 ```
 
-即**有 GPU、但零动态指标**。`available: []` 使前端正确降级为纯静态信息卡，未渲染任何空白图表——§7.3 设计的降级路径得到实证。
+> 历史记录：早期版本 macOS 的 `available` 为空数组，前端降级为纯静态信息卡（§7.3 的降级路径）。后来补上了 `ioreg` 数据源（`services/gpu-macos.ts`），Apple Silicon 现在能拿到使用率与已用共享内存；「零动态指标」的降级路径改由未装驱动的核显 / 受限容器场景覆盖。
 
 ⚠️ **NVIDIA 路径仍未验证**：本机无 NVIDIA 硬件，`available` 非空的完整渲染路径、以及 `nvidia-smi` 缺失时的容错，均需在真实 NVIDIA 机器上补测。
 
@@ -1748,9 +1717,8 @@ Bun 的 `fetch` + `FormData` **忽略 `File` 对象上的 `type`，改从文件�
 
 | 测试文件 | 用例数 | 覆盖内容 |
 |---|---|---|
-| `src/shared/resolve-url.test.ts` | 28 | 内外网解析完整优先级矩阵（3×3 偏好×模式 + 穷举回退） |
-| `src/server/services/net-probe.test.ts` | 52 | SSRF 白名单（私有网段边界、IPv6、非法 scheme）、TCP 探测、超时 |
-| `src/server/api.test.ts` | 43 | 端到端：启动真实服务进程，覆盖全部 API、校验边界、上传安全、备份往返 |
-| **合计** | **114** | 全部通过 |
+| `src/shared/resolve-url.test.ts` | 44 | 内外网解析优先级矩阵 + `isLanHost` 访问方式判定（IP / localhost / 域名） |
+| `src/server/api.test.ts` | 39 | 端到端：启动真实服务进程，覆盖全部 API、校验边界、上传安全、备份往返 |
+| **合计** | **83** | 全部通过 |
 
 其中 `api.test.ts` 是**真实进程级**集成测试（`Bun.spawn` 启动服务器 + 真实 HTTP 请求），而非 in-process 调用，因此能覆盖数据库、中间件、后台服务的真实组合行为。

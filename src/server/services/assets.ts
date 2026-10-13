@@ -13,11 +13,11 @@ import { assets } from '../db/schema'
 import { HttpError } from '../middleware/error'
 import type { Asset, AssetKind } from '@shared/types'
 
-/** 单文件体积上限 */
+/** 单文件体积上限；wallpaper 不设限 */
 export const SIZE_LIMITS: Record<AssetKind, number> = {
   icon: 512 * 1024,
   favicon: 512 * 1024,
-  wallpaper: 5 * 1024 * 1024,
+  wallpaper: Number.POSITIVE_INFINITY,
 }
 
 /** 允许的图片类型 —— 与 sniffImageMime 的返回值域保持一致 */
@@ -147,7 +147,7 @@ export function storeAsset(
   if (bytes.byteLength === 0) {
     throw new HttpError(400, 'EMPTY_FILE', '文件内容为空')
   }
-  if (bytes.byteLength > limit) {
+  if (Number.isFinite(limit) && bytes.byteLength > limit) {
     throw new HttpError(
       413,
       'TOO_LARGE',

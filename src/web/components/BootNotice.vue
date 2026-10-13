@@ -45,7 +45,6 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: blur(6px);
   padding: 20px;
 }
 

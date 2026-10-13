@@ -58,20 +58,6 @@ export const useMonitorStore = defineStore('monitor', () => {
     return (m.swapUsed / m.swapTotal) * 100
   })
 
-  /** 按设置过滤后的磁盘列表（monitor.disks 为空 = 全部） */
-  function disksFiltered(mounts: readonly string[]): NonNullable<SystemSnapshot['disks']> {
-    const list = latest.value?.disks ?? []
-    if (mounts.length === 0) return list
-    return list.filter((d) => mounts.includes(d.mount))
-  }
-
-  /** 按设置过滤后的网卡列表（monitor.netIfaces 为空 = 全部） */
-  function netFiltered(ifaces: readonly string[]): NonNullable<SystemSnapshot['net']> {
-    const list = latest.value?.net ?? []
-    if (ifaces.length === 0) return list
-    return list.filter((n) => ifaces.includes(n.iface))
-  }
-
   /**
    * 接收一个新快照。
    * 隐藏时只更新最新值、不追加历史 —— 否则重新聚焦时折线会被压缩变形。
@@ -140,8 +126,6 @@ export const useMonitorStore = defineStore('monitor', () => {
     hasData,
     memPercent,
     swapPercent,
-    disksFiltered,
-    netFiltered,
     pushSnapshot,
     refresh,
     loadStaticInfo,

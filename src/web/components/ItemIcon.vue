@@ -6,7 +6,7 @@
  *   asset    → iconValue 里的图片地址（dataURL 或 /api/assets/xxx）
  *             ⚠️ 自建服务可能没有这个接口，加载失败时回落到文字/矢量字形
  *   text     → 1-2 个字符（含 emoji），背景/前景色来自 iconColor / bgColor
- *   favicon  → iconValue 里的图片地址（后端抓取结果或 DuckDuckGo 占位），
+ *   favicon  → iconValue 里的图片地址（后端 /api/favicon 抓取结果），
  *             同样带失败回落到矢量字形
  */
 import { computed, ref, watch } from 'vue'
@@ -59,6 +59,8 @@ const boxStyle = computed(() => {
   const style: Record<string, string> = {
     width: `${props.size}px`,
     height: `${props.size}px`,
+    // 圆角随尺寸走（50px → 12px，与 sun-panel 图标一致）
+    borderRadius: `${Math.max(6, Math.round(props.size * 0.24))}px`,
   }
   if (showText.value) {
     style.background = props.item.bgColor || 'color-mix(in srgb, var(--accent) 18%, transparent)'

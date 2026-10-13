@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { getStaticInfo } from '../services/system-info'
 import { monitor } from '../services/monitor'
+import { scheduleRestart } from '../services/restart'
 
 export const systemRoutes = new Hono()
   // 静态信息（CPU 型号、OS、磁盘布局、GPU 列表、显示器）
@@ -18,6 +19,10 @@ export const systemRoutes = new Hono()
 
   // 环形缓冲全量（页面重新聚焦时补齐趋势图）
   .get('/history', (c) => c.json(monitor.history()))
+
+  // 重启面板进程。先回响应、200ms 后才真正关停并拉起新进程，
+  // 所以前端拿到 200 只代表「已受理」，是否起来要自己轮询 /healthz（见 services/restart）
+  .post('/restart', (c) => c.json({ ok: true, ...scheduleRestart() }))
 
   // 实时推送
   .get('/stream', (c) => {
