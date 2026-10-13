@@ -93,6 +93,28 @@ export function fmtUptime(seconds: number | null | undefined): string {
   return `${m} 分`
 }
 
+/**
+ * 秒 → 天/时/分/秒（「设置 → 关于」用）。
+ *
+ * 与上面的 fmtUptime 是两种口径：卡片位置紧张、只求一眼看出量级，所以省掉秒；
+ * 关于页要的是准确读数，秒必须留着，只吞掉高位为 0 的段：
+ * 5207 → `1 小时 26 分 47 秒`，不做 `0 天 1 小时 …` 这种补位。
+ */
+export function fmtUptimeFull(seconds: number | null | undefined): string {
+  if (!isNum(seconds) || seconds < 0) return '—'
+  const total = Math.floor(seconds)
+  const d = Math.floor(total / 86400)
+  const h = Math.floor((total % 86400) / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const parts: string[] = []
+  if (d > 0) parts.push(`${d} 天`)
+  if (d > 0 || h > 0) parts.push(`${h} 小时`)
+  if (d > 0 || h > 0 || m > 0) parts.push(`${m} 分`)
+  parts.push(`${s} 秒`)
+  return parts.join(' ')
+}
+
 /** CPU 频率：`cpu.speed` 本身就是 GHz */
 export function fmtGhz(v: number | null | undefined): string {
   if (!isNum(v) || v <= 0) return '—'

@@ -32,6 +32,7 @@ import { useNetworkStore } from '@/stores/network'
 import { useMonitorStore } from '@/stores/monitor'
 import { api } from '@/api/client'
 import { SETTINGS_DEFAULTS } from '@/api/settings'
+import { fmtUptimeFull } from '@/utils/format'
 import FaviconGlyph from '@/components/FaviconGlyph.vue'
 import {
   SETTINGS_HINTS,
@@ -377,6 +378,38 @@ const health = ref<{ version: string; schemaVersion?: number; uptime: number; pi
   null,
 )
 
+/**
+ * 运行时长走本地走秒：/healthz 的 uptime 只在打开弹窗 / 重启后取一次，
+ * 而展示口径已细到秒，不复读的话读数会冻在打开那一刻。
+ *
+ * 用「取数时刻 + 当前时刻」算差值，而不是每秒累加一个计数器：
+ * 切到别的分类、标签页被后台节流时定时器会停摆或掉拍，累加会永久少算，
+ * 取时间戳差值则在下一拍自动追平。定时器只在弹窗打开期间跑。
+ */
+const uptimeAnchor = ref<{ seconds: number; at: number } | null>(null)
+const nowTs = ref(Date.now())
+let uptimeTimer: ReturnType<typeof setInterval> | null = null
+
+const uptimeSeconds = computed(() =>
+  uptimeAnchor.value === null
+    ? null
+    : uptimeAnchor.value.seconds + Math.floor((nowTs.value - uptimeAnchor.value.at) / 1000),
+)
+
+watch(
+  () => props.show,
+  (open) => {
+    if (uptimeTimer !== null) {
+      clearInterval(uptimeTimer)
+      uptimeTimer = null
+    }
+    if (!open) return
+    nowTs.value = Date.now()
+    uptimeTimer = setInterval(() => (nowTs.value = Date.now()), 1000)
+  },
+  { immediate: true },
+)
+
 async function loadAbout(): Promise<void> {
   try {
     const payload = await api.bootstrap()
@@ -387,11 +420,20 @@ async function loadAbout(): Promise<void> {
   try {
     const h = await api.health()
     health.value = { version: h.version, uptime: h.uptime, pid: h.pid }
+    uptimeAnchor.value = { seconds: h.uptime, at: Date.now() }
   } catch {
     health.value = null
+    uptimeAnchor.value = null
   }
   await monitor.loadStaticInfo()
 }
+
+onBeforeUnmount(() => {
+  if (uptimeTimer !== null) {
+    clearInterval(uptimeTimer)
+    uptimeTimer = null
+  }
+})
 
 /** 重启进行中：按钮转圈并挡住重复点击 */
 const restarting = ref(false)
@@ -915,7 +957,7 @@ async function waitForNewProcess(oldPid: number, timeoutMs = 20_000): Promise<bo
                     <span class="kv-value mono">{{ health?.version ?? itemsStore.version ?? '0.1.0' }}</span>
 
                     <span class="kv-label">运行时长</span>
-                    <span class="kv-value mono">{{ health ? `${Math.round(health.uptime)} 秒` : '—' }}</span>
+                    <span class="kv-value mono">{{ fmtUptimeFull(uptimeSeconds) }}</span>
 
                     <span class="kv-label">平台</span>
                     <span class="kv-value mono">
