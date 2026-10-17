@@ -74,16 +74,19 @@ jobs:
       - name: 单元测试
         run: bun test
 
-      # 只上传这一个文件：打包时前端产物与迁移 SQL 都经它访问
-      - name: 上传资源清单
+      # dist/ 必须一起带走：assets.ts 里是 `import "../../../dist/xxx" with { type: 'file' }`，
+      # 编译时那些文件得真实存在，否则 bun build 直接报 Could not resolve
+      - name: 上传前端产物与资源清单
         uses: actions/upload-artifact@v4
         with:
-          name: generated-assets
-          path: src/server/generated/assets.ts
+          name: web-build
+          path: |
+            dist/
+            src/server/generated/assets.ts
           retention-days: 3
 
   build:
-    name: 编译 ${{ matrix.name }}
+    name: 编译 ${{ matrix.label }}
     needs: prepare
     runs-on: ubuntu-latest
     strategy:
@@ -129,11 +132,12 @@ jobs:
       - name: 安装依赖
         run: bun install --frozen-lockfile
 
-      - name: 取回资源清单
+      # 解到仓库根：压缩包里是 dist/ 与 src/server/generated/assets.ts 两个相对路径
+      - name: 取回前端产物与资源清单
         uses: actions/download-artifact@v4
         with:
-          name: generated-assets
-          path: src/server/generated/
+          name: web-build
+          path: .
 
       # 交叉编译：bun build --compile 会把对应平台的运行时一起塞进产物（scripts/build.ts 封装）
       - name: 编译可执行文件
