@@ -9,6 +9,7 @@ import { useItemsStore } from '@/stores/items'
 import { useNetworkStore } from '@/stores/network'
 import { useSettingsStore } from '@/stores/settings'
 import { useDeleteConfirm } from './useDeleteConfirm'
+import { TEXT as T } from '@shared/text'
 import type { Item } from '@shared/types'
 
 export interface OpenResult {
@@ -29,7 +30,7 @@ export function useItemActions() {
     const resolved = network.resolve(item)
 
     if (!resolved.url) {
-      message.warning(`「${item.title}」没有可用的地址`)
+      message.warning(T.actions.noAddress(item.title))
       return { ok: false, reason: 'no-url', url: null }
     }
 
@@ -42,12 +43,12 @@ export function useItemActions() {
   async function copyLink(item: Item): Promise<void> {
     const resolved = network.resolve(item)
     if (!resolved.url) {
-      message.warning('没有可复制的地址')
+      message.warning(T.actions.nothingToCopy)
       return
     }
     try {
       await navigator.clipboard.writeText(resolved.url)
-      message.success('链接已复制')
+      message.success(T.actions.copied)
     } catch {
       // 非安全上下文（http://内网 IP）下 Clipboard API 不可用 → 退回到旧接口
       const ta = document.createElement('textarea')
@@ -58,7 +59,7 @@ export function useItemActions() {
       ta.select()
       const ok = document.execCommand('copy')
       document.body.removeChild(ta)
-      message[ok ? 'success' : 'error'](ok ? '链接已复制' : '复制失败，请手动复制')
+      message[ok ? 'success' : 'error'](ok ? T.actions.copied : T.actions.copyFailed)
     }
   }
 
@@ -67,10 +68,10 @@ export function useItemActions() {
     if (!(await confirmRemove(item))) return false
     try {
       await items.removeItem(item.id)
-      message.success(`已删除「${item.title}」`)
+      message.success(T.actions.deleted(item.title))
       return true
     } catch (e) {
-      message.error(e instanceof Error ? e.message : '删除失败')
+      message.error(e instanceof Error ? e.message : T.common.deleteFailed)
       return false
     }
   }

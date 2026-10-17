@@ -14,10 +14,16 @@ import { asc } from 'drizzle-orm'
 import { db } from '../db'
 import { assets, groups, items } from '../db/schema'
 import { toGroup, toItem } from '../db/mappers'
-import { getAllSettings, patchSettings } from '../services/settings'
+import {
+  getAllSettings,
+  getSetting,
+  isReservedSettingKey,
+  patchSettings,
+} from '../services/settings'
+import { monitor } from '../services/monitor'
 import { jsonBody } from '../middleware/validate'
 import { HttpError } from '../middleware/error'
-import { storeAsset } from '../services/assets'
+import { readAssetBytes, storeAsset } from '../services/assets'
 
 const VERSION = '0.1.0'
 const FORMAT = 'starm-panel-backup'
@@ -69,16 +75,27 @@ export const backupRoutes = new Hono()
     }
 
     if (withAssets) {
+      // 图标 / favicon 来自 BLOB，壁纸来自 bg/ 文件 —— 统一走 readAssetBytes()。
+      // 单个资源读不出来（文件被手工删了）只跳过它，不让整份导出失败。
       payload['assets'] = db
         .select()
         .from(assets)
         .all()
-        .map((a) => ({
-          kind: a.kind,
-          name: a.name,
-          mime: a.mime,
-          dataBase64: Buffer.from(a.bytes).toString('base64'),
-        }))
+        .flatMap((a) => {
+          try {
+            return [
+              {
+                kind: a.kind,
+                name: a.name,
+                mime: a.mime,
+                dataBase64: Buffer.from(readAssetBytes(a)).toString('base64'),
+              },
+            ]
+          } catch {
+            console.warn(`[backup] 跳过无法读取的资源 ${a.id}（${a.name}）`)
+            return []
+          }
+        })
     }
 
     const filename = `starm-panel-backup-${new Date().toISOString().slice(0, 10)}.json`
@@ -183,13 +200,24 @@ export const backupRoutes = new Hono()
       }
     })
 
-    // 设置在事务外写入（settings 服务自带事务）
+    // 设置在事务外写入（settings 服务自带事务）。
+    // 认证相关键（口令哈希 / 会话世代）一律丢弃：备份文件是可以随手分享的，
+    // 让它覆盖口令哈希等于给出一条认证绕过路径。
     const settingsPatch = Object.fromEntries(
-      Object.entries(payload.settings).filter(([k]) => k !== 'auth.passwordHash'),
+      Object.entries(payload.settings).filter(([k]) => !isReservedSettingKey(k)),
     )
     if (Object.keys(settingsPatch).length > 0) {
       patchSettings(settingsPatch)
       stats.settings = Object.keys(settingsPatch).length
+
+      // 采样频率这类设置由后台服务持有，写完要当场通知它重设调度，
+      // 否则迁移过来的采样间隔要等下次重启才生效（与 PATCH /api/settings 同一条规则）。
+      if (Object.keys(settingsPatch).some((k) => /^monitor\./.test(k))) {
+        monitor.applySettings({
+          intervalMs: getSetting('monitor.interval'),
+          hiddenIntervalMs: getSetting('monitor.hiddenInterval'),
+        })
+      }
     }
 
     return c.json({ ok: true, mode, imported: stats })

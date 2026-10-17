@@ -159,6 +159,65 @@ export const ItemReorderSchema = z.object({
 export const SettingsPatchSchema = z.record(z.string().min(1).max(64), z.unknown())
 
 // ─────────────────────────────────────────────────────────────
+// 管理员认证（单账号）
+// ─────────────────────────────────────────────────────────────
+
+export const PASSWORD_MIN = 8
+export const PASSWORD_MAX = 128
+
+/**
+ * 明显弱口令黑名单 —— 只挡最离谱的一批。
+ * 刻意**不**强制大小写/数字/符号组合：长度才是决定性因素，
+ * 复杂度规则只会把人逼去写 `Passw0rd!` 这种更难记、也未必更强的口令。
+ */
+const WEAK_PASSWORDS: ReadonlySet<string> = new Set([
+  'password',
+  'password1',
+  'password123',
+  'passw0rd',
+  '12345678',
+  '123456789',
+  '1234567890',
+  '87654321',
+  'qwertyui',
+  'qwerty123',
+  'abc12345',
+  '11111111',
+  '00000000',
+  'admin123',
+  'administrator',
+  'letmein1',
+  'iloveyou',
+  'starmpanel',
+  'starm-panel',
+  'starm.panel',
+])
+
+/** 密码规则：前后端共用（前端表单即时提示，后端最终裁决） */
+export const PasswordSchema = z
+  .string()
+  .min(PASSWORD_MIN, `密码至少 ${PASSWORD_MIN} 位`)
+  .max(PASSWORD_MAX, `密码最多 ${PASSWORD_MAX} 位`)
+  .refine((v) => v.trim().length > 0, { message: '密码不能全是空格' })
+  .refine((v) => !WEAK_PASSWORDS.has(v.trim().toLowerCase()), {
+    message: '这个密码太常见了，换一个吧',
+  })
+
+/** 首次设定管理员密码 */
+export const AuthSetupSchema = z.object({ password: PasswordSchema })
+
+/** 登录：只校验存在性与长度上限（错误原因一律由服务端统一回「密码错误」） */
+export const AuthLoginSchema = z.object({
+  password: z.string().min(1, '请输入密码').max(PASSWORD_MAX, `密码最多 ${PASSWORD_MAX} 位`),
+})
+
+/** 修改密码 */
+export const AuthPasswordChangeSchema = z.object({
+  currentPassword: z.string().min(1, '请输入当前密码').max(PASSWORD_MAX),
+  newPassword: PasswordSchema,
+})
+
+// ─────────────────────────────────────────────────────────────
 // 其他
 // ─────────────────────────────────────────────────────────────
 

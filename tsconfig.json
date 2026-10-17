@@ -16,11 +16,11 @@
     "verbatimModuleSyntax": true,
     "jsx": "preserve",
     "noEmit": true,
-    "baseUrl": ".",
+    // 不设 baseUrl（TS 6.0 起已弃用、7.0 移除）：省略 baseUrl 时 paths 直接相对本文件解析
     "paths": {
-      "@/*": ["src/web/*"],
-      "@shared/*": ["src/shared/*"],
-      "@server/*": ["src/server/*"]
+      "@/*": ["./src/web/*"],
+      "@shared/*": ["./src/shared/*"],
+      "@server/*": ["./src/server/*"]
     }
   },
   "include": [

@@ -57,10 +57,20 @@ export const assets = sqliteTable(
     id: text('id').primaryKey(),
     /** icon | wallpaper | favicon */
     kind: text('kind').notNull(),
+    /** 上传时的原始文件名（壁纸落盘后也用它做展示名） */
     name: text('name').notNull(),
     mime: text('mime').notNull(),
     size: integer('size').notNull(),
-    bytes: blob('bytes', { mode: 'buffer' }).notNull(),
+    /**
+     * 二进制内容：**只给 icon / favicon 用**。
+     * 壁纸走文件存储（`<data-dir>/bg/<file_name>`），这里留 NULL。
+     */
+    bytes: blob('bytes', { mode: 'buffer' }),
+    /**
+     * 壁纸在 `<data-dir>/bg/` 下的文件名（原始文件名，重名时带 -1 后缀）。
+     * 非壁纸一律为 NULL；`bytes` 与它互斥，读取见 `readAssetBytes()`。
+     */
+    fileName: text('file_name'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('idx_assets_kind').on(t.kind)],

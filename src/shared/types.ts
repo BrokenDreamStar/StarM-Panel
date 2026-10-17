@@ -70,6 +70,11 @@ export interface Asset {
   mime: string
   size: number
   createdAt: number
+  /**
+   * 壁纸的文件直链（`/bg/<文件名>`）—— 只有壁纸有。
+   * 图标 / favicon 存在数据库里，引用方式是 `/api/assets/<id>`。
+   */
+  bgUrl?: string
 }
 
 /** GET /api/bootstrap —— 一次请求拿到首屏渲染所需的全部数据 */
@@ -84,6 +89,29 @@ export interface BootstrapPayload {
     arch: string
     hostname: string
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 管理员认证（单账号，无多用户）
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * `GET /api/auth/state` 的响应。
+ * 登录页 / 首启设置页据此决定展示哪种形态，无需先拿 bootstrap。
+ */
+export interface AuthState {
+  /** 是否启用登录保护（设置项 auth.enabled） */
+  enabled: boolean
+  /** 是否已设置管理员密码 */
+  passwordSet: boolean
+  /** 本次请求是否已通过认证 */
+  authenticated: boolean
+  /** 上次登录时间（Unix 毫秒）—— 仅已认证时返回 */
+  lastLoginAt?: number | null
+  /** 上次登录来源 IP —— 仅已认证时返回 */
+  lastLoginIp?: string | null
+  /** 会话有效期（天）—— 仅已认证时返回 */
+  sessionDays?: number
 }
 
 // ─────────────────────────────────────────────────────────────

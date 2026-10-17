@@ -19,6 +19,7 @@ import {
 } from '@/composables/useStatCards'
 import { useEditModeDismiss } from '@/composables/useEditModeDismiss'
 import { useDeleteConfirm } from '@/composables/useDeleteConfirm'
+import { TEXT as T } from '@shared/text'
 import SystemStatCard from './SystemStatCard.vue'
 import SystemStatDetail from './SystemStatDetail.vue'
 import FaviconGlyph from './FaviconGlyph.vue'
@@ -59,15 +60,15 @@ function pick(candidate: CardCandidate): void {
 
 /** 移除角标的 tooltip：按设备粒度，写清移除的是哪一台 */
 function removeTitle(card: StatCardRef): string {
-  return `移除「${cardDisplayName(card.kind, card.device)}」卡片`
+  return T.status.removeCardAria(cardDisplayName(card.kind, card.device))
 }
 
 /** 移除一张硬件卡片：先弹确认弹窗，取消则不写回设置 */
 async function requestRemove(card: StatCardRef): Promise<void> {
   const ok = await confirm({
-    title: '移除卡片',
-    content: `确定移除「${cardDisplayName(card.kind, card.device)}」卡片？之后可在「添加卡片」中重新加回。`,
-    positiveText: '移除',
+    title: T.status.removeCard,
+    content: T.status.removeCardConfirm(cardDisplayName(card.kind, card.device)),
+    positiveText: T.status.remove,
   })
   if (!ok) return
   void removeCard(card)
@@ -102,7 +103,7 @@ function onDrop(card: StatCardRef): void {
 <template>
   <section class="status-section">
     <header class="section-head">
-      <h2 class="section-title">系统状态</h2>
+      <h2 class="section-title">{{ T.status.title }}</h2>
       <SectionEditToggle :active="editMode" @toggle="editMode = !editMode" />
     </header>
 
@@ -138,15 +139,15 @@ function onDrop(card: StatCardRef): void {
             class="add-tile"
             type="button"
             :disabled="candidates.length === 0"
-            :title="candidates.length === 0 ? '已添加全部信息卡片' : '添加信息卡片'"
+            :title="candidates.length === 0 ? T.status.allAdded : T.status.addButton"
           >
             <span class="plus-circle"><FaviconGlyph name="plus" :size="15" /></span>
-            <span>添加卡片</span>
+            <span>{{ T.status.addButton }}</span>
           </button>
         </template>
 
         <div class="picker">
-          <p class="picker-title dim">添加信息卡片</p>
+          <p class="picker-title dim">{{ T.status.addButton }}</p>
           <button
             v-for="candidate in candidates"
             :key="candidate.id"
@@ -165,7 +166,7 @@ function onDrop(card: StatCardRef): void {
     </div>
 
     <p v-if="cards.length === 0" class="section-hint dim">
-      还没有信息卡片 —— 点「添加卡片」选择要展示的系统信息。
+      {{ T.status.empty }}
     </p>
 
     <SystemStatDetail v-model:show="showDetail" :card="active" />

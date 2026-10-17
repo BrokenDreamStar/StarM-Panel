@@ -15,6 +15,7 @@ import { computed } from 'vue'
 import { NModal } from 'naive-ui'
 import { useMonitorStore } from '@/stores/monitor'
 import { STAT_CARD_META, type StatCardRef } from '@/composables/useStatCards'
+import { TEXT as T } from '@shared/text'
 import type { GpuMetric, GpuSnapshot, GpuStaticInfo } from '@shared/types'
 import {
   barLevel,
@@ -89,9 +90,11 @@ const memSegments = computed(() => {
   if (!m || m.total <= 0) return []
   const cached = Math.max(0, m.total - m.used - m.free)
   const segs = [
-    { key: 'used', label: '已用', bytes: m.used, cls: 'used' },
-    ...(cached > 0 ? [{ key: 'cached', label: '缓存/缓冲', bytes: cached, cls: 'cached' }] : []),
-    { key: 'free', label: '空闲', bytes: m.free, cls: 'free' },
+    { key: 'used', label: T.detail.used, bytes: m.used, cls: 'used' },
+    ...(cached > 0
+      ? [{ key: 'cached', label: T.detail.cached, bytes: cached, cls: 'cached' }]
+      : []),
+    { key: 'free', label: T.detail.free, bytes: m.free, cls: 'free' },
   ]
   return segs.map((s) => ({ ...s, ratio: (s.bytes / m.total) * 100 }))
 })
@@ -142,14 +145,8 @@ const gpuViews = computed<GpuView[]>(() => {
   return list.filter((g) => String(g.index) === device.value)
 })
 
-const GPU_METRIC_LABELS: Record<GpuMetric, string> = {
-  utilization: '使用率',
-  memory: '显存',
-  temperature: '温度',
-  power: '功耗',
-  fan: '风扇转速',
-  clock: '频率',
-}
+/** 指标名直接取自文案表，键与 GpuMetric 一一对应 */
+const GPU_METRIC_LABELS: Record<GpuMetric, string> = T.detail.gpuMetric
 
 interface MetricRow {
   key: GpuMetric
@@ -219,36 +216,38 @@ function gpuVram(gpu: GpuView): string {
   if (typeof total === 'number') return fmtBytes(total)
   const vram = gpu.stat?.vram
   if (typeof vram === 'number') {
-    return `${fmtBytes(vram)}${gpu.stat?.vramDynamic ? '（与内存共享）' : ''}`
+    return gpu.stat?.vramDynamic ? T.detail.sharedWithMemory(fmtBytes(vram)) : fmtBytes(vram)
   }
   // Apple Silicon：有已用、无上限，显式说明是共享内存
   const used = gpu.snap?.memoryUsed
-  if (typeof used === 'number') return `${fmtBytes(used)}（已用，与内存共享）`
-  return '未知'
+  if (typeof used === 'number') return T.detail.usedSharedWithMemory(fmtBytes(used))
+  return T.common.unknown
 }
 
 // ── 文案 ─────────────────────────────────────────────────────
 
 const title = computed(() =>
-  kind.value === 'disk' ? `磁盘 ${device.value}` : `${meta.value.title}详情`,
+  kind.value === 'disk'
+    ? T.detail.diskTitle(device.value)
+    : T.detail.detailTitle(meta.value.title),
 )
 
 const subtitle = computed(() => {
   switch (kind.value) {
     case 'cpu':
-      return stat.value?.cpu.brand || '处理器'
+      return stat.value?.cpu.brand || T.detail.processor
     case 'memory':
-      return '物理内存与交换分区'
+      return T.detail.memorySwap
     case 'disk':
-      return diskInfo.value?.type || statDisk.value?.type || '磁盘使用情况'
+      return diskInfo.value?.type || statDisk.value?.type || T.detail.diskUsage
     case 'network':
-      return device.value || `${netIfaces.value.length} 个网卡`
+      return device.value || T.detail.netifaceCount(netIfaces.value.length)
     case 'gpu':
-      return gpuViews.value[0]?.model || `${gpuViews.value.length} 个 GPU 设备`
+      return gpuViews.value[0]?.model || T.detail.gpuCount(gpuViews.value.length)
     default:
       return stat.value
         ? `${stat.value.os.distro || stat.value.os.platform} · ${stat.value.os.hostname}`
-        : '主机信息'
+        : T.detail.hostInfo
   }
 })
 
@@ -262,19 +261,22 @@ const infoRows = computed<InfoRow[]>(() => {
     case 'cpu': {
       const s = stat.value?.cpu
       return [
-        { label: '型号', value: s?.brand || '—' },
-        { label: '厂商', value: s?.manufacturer || '—' },
-        { label: '核心/线程', value: s ? `${s.physicalCores} 核心 / ${s.cores} 线程` : '—' },
-        { label: '主频', value: s ? fmtGhz(s.speed) : '—' },
+        { label: T.detail.kv.model, value: s?.brand || '—' },
+        { label: T.detail.kv.manufacturer, value: s?.manufacturer || '—' },
+        {
+          label: T.detail.kv.coresThreads,
+          value: s ? T.detail.kv.coresThreadsValue(s.physicalCores, s.cores) : '—',
+        },
+        { label: T.detail.kv.speed, value: s ? fmtGhz(s.speed) : '—' },
       ]
     }
     case 'memory': {
       return [
         // 说明：/api/system/info 目前没有内存字段，总量只能来自实时采样数据
-        { label: '总内存', value: fmtBytes(mem.value?.total) },
-        { label: '空闲', value: fmtBytes(mem.value?.free) },
-        { label: '可用', value: fmtBytes(mem.value?.available) },
-        { label: 'SWAP', value: fmtBytesPair(mem.value?.swapUsed, mem.value?.swapTotal) },
+        { label: T.detail.kv.totalMemory, value: fmtBytes(mem.value?.total) },
+        { label: T.detail.kv.free, value: fmtBytes(mem.value?.free) },
+        { label: T.detail.kv.available, value: fmtBytes(mem.value?.available) },
+        { label: T.detail.swap, value: fmtBytesPair(mem.value?.swapUsed, mem.value?.swapTotal) },
       ]
     }
     case 'disk': {
@@ -282,28 +284,28 @@ const infoRows = computed<InfoRow[]>(() => {
       const s = statDisk.value
       const total = d?.total ?? s?.size ?? null
       return [
-        { label: '挂载点', value: device.value || '—' },
-        { label: '文件系统', value: d?.type || s?.type || '—' },
-        { label: '设备', value: d?.fs || s?.fs || '—' },
-        { label: '总容量', value: fmtBytes(total) },
-        { label: '已用', value: d ? fmtBytes(d.used) : '—' },
-        { label: '可用', value: d ? fmtBytes(Math.max(0, d.total - d.used)) : '—' },
-        { label: '读取速率', value: fmtDiskRate(d?.readBps) },
-        { label: '写入速率', value: fmtDiskRate(d?.writeBps) },
+        { label: T.detail.kv.mount, value: device.value || '—' },
+        { label: T.detail.kv.fileSystem, value: d?.type || s?.type || '—' },
+        { label: T.detail.kv.device, value: d?.fs || s?.fs || '—' },
+        { label: T.detail.kv.totalCapacity, value: fmtBytes(total) },
+        { label: T.detail.kv.used, value: d ? fmtBytes(d.used) : '—' },
+        { label: T.detail.kv.available, value: d ? fmtBytes(Math.max(0, d.total - d.used)) : '—' },
+        { label: T.detail.kv.readRate, value: fmtDiskRate(d?.readBps) },
+        { label: T.detail.kv.writeRate, value: fmtDiskRate(d?.writeBps) },
       ]
     }
     case 'system': {
       const s = stat.value
       return [
-        { label: '主机名', value: s?.os.hostname || '—' },
-        { label: '发行版', value: s ? s.os.distro || s.os.platform : '—' },
-        { label: '内核', value: s?.os.kernel || s?.os.release || '—' },
-        { label: '架构', value: s?.os.arch || '—' },
-        { label: '运行时长', value: fmtUptime(sys.value?.uptime) },
-        { label: '进程数', value: sys.value ? String(sys.value.processes) : '—' },
-        { label: '用户数', value: sys.value ? String(sys.value.users) : '—' },
-        { label: 'CPU 型号', value: s?.cpu.brand || '—' },
-        { label: '内存总量', value: fmtBytes(mem.value?.total) },
+        { label: T.detail.kv.hostname, value: s?.os.hostname || '—' },
+        { label: T.detail.kv.distro, value: s ? s.os.distro || s.os.platform : '—' },
+        { label: T.detail.kv.kernel, value: s?.os.kernel || s?.os.release || '—' },
+        { label: T.detail.kv.arch, value: s?.os.arch || '—' },
+        { label: T.detail.kv.uptime, value: fmtUptime(sys.value?.uptime) },
+        { label: T.detail.kv.processes, value: sys.value ? String(sys.value.processes) : '—' },
+        { label: T.detail.kv.users, value: sys.value ? String(sys.value.users) : '—' },
+        { label: T.detail.kv.cpuModel, value: s?.cpu.brand || '—' },
+        { label: T.detail.kv.memoryTotal, value: fmtBytes(mem.value?.total) },
       ]
     }
     default:
@@ -313,6 +315,22 @@ const infoRows = computed<InfoRow[]>(() => {
 
 /** CPU 最近采样的横向条形历史（用 div 而非 SVG，避免图表元素混入） */
 const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
+
+// ── 整句文案：原文由插值/换行切开，这里合成一条后整体插值 ──────────
+
+/** CPU 负载 chip */
+const loadChipText = computed(() => `${T.detail.loadPrefix}${loadText.value}`)
+
+/** CPU 实时频率 chip */
+const liveSpeedText = computed(() => `${T.detail.live} ${fmtGhz(cpu.value?.speed)}`)
+
+/** 系统块的「实时采样时间」整句（zh-CN 是 locale 标识，不是文案） */
+const sampleTimeText = computed(() => {
+  const time = snap.value
+    ? new Date(snap.value.ts).toLocaleTimeString('zh-CN', { hour12: false })
+    : '—'
+  return `${T.detail.sampleTime} ${time}`
+})
 </script>
 
 <template>
@@ -334,13 +352,13 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
     </template>
 
     <div class="detail-body">
-      <p v-if="!snap && !stat" class="dim">正在读取系统数据…</p>
+      <p v-if="!snap && !stat" class="dim">{{ T.detail.loading }}</p>
 
       <!-- ── CPU ────────────────────────────────────────────── -->
       <template v-else-if="kind === 'cpu'">
         <div class="metric">
           <div class="metric-row">
-            <span class="metric-label">总使用率</span>
+            <span class="metric-label">{{ T.detail.cpuTotal }}</span>
             <span class="metric-value mono">{{ pct(cpu?.usage) }}</span>
           </div>
           <div class="track lg">
@@ -353,17 +371,19 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
         </div>
 
         <div class="chips">
-          <span class="chip mono">负载 1/5/15：{{ loadText }}</span>
+          <span class="chip mono">{{ loadChipText }}</span>
           <!-- temp 为 null 时整项不显示（而不是显示一个假温度） -->
-          <span v-if="cpuTemp !== null" class="chip mono">温度 {{ cpuTemp }} °C</span>
-          <span v-if="cpu?.speed !== null && cpu?.speed !== undefined" class="chip mono">
-            实时 {{ fmtGhz(cpu.speed) }}
+          <span v-if="cpuTemp !== null" class="chip mono">
+            {{ T.detail.gpuMetric.temperature }} {{ cpuTemp }} °C
           </span>
-          <span class="chip mono">{{ cpu?.perCore.length ?? 0 }} 核心</span>
+          <span v-if="cpu?.speed !== null && cpu?.speed !== undefined" class="chip mono">
+            {{ liveSpeedText }}
+          </span>
+          <span class="chip mono">{{ T.detail.cores(cpu?.perCore.length ?? 0) }}</span>
         </div>
 
         <template v-if="(cpu?.perCore.length ?? 0) > 0">
-          <h4 class="sub-title">每核心使用率</h4>
+          <h4 class="sub-title">{{ T.detail.perCore }}</h4>
           <div class="cores">
             <div v-for="(core, i) in cpu?.perCore ?? []" :key="i" class="core">
               <span class="core-name mono">#{{ i }}</span>
@@ -380,7 +400,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
         </template>
 
         <template v-if="cpuHistory.length > 1">
-          <h4 class="sub-title">最近 {{ cpuHistory.length }} 次采样</h4>
+          <h4 class="sub-title">{{ T.detail.recentSamples(cpuHistory.length) }}</h4>
           <div class="history">
             <span
               v-for="(v, i) in cpuHistory"
@@ -393,7 +413,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
           </div>
         </template>
 
-        <h4 class="sub-title">静态信息</h4>
+        <h4 class="sub-title">{{ T.statCard.staticInfo }}</h4>
         <div class="kv-grid">
           <div v-for="row in infoRows" :key="row.label" class="kv">
             <span class="dim">{{ row.label }}</span>
@@ -406,7 +426,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
       <template v-else-if="kind === 'memory'">
         <div class="metric">
           <div class="metric-row">
-            <span class="metric-label">已用 / 总量</span>
+            <span class="metric-label">{{ T.detail.usedOfTotal }}</span>
             <span class="metric-value mono">{{ pct(monitor.memPercent) }}</span>
           </div>
           <div class="segbar">
@@ -430,7 +450,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
         </div>
 
         <template v-if="(mem?.swapTotal ?? 0) > 0">
-          <h4 class="sub-title">SWAP</h4>
+          <h4 class="sub-title">{{ T.detail.swap }}</h4>
           <div class="metric">
             <div class="metric-row">
               <span class="metric-label">{{ fmtBytesPair(mem?.swapUsed, mem?.swapTotal) }}</span>
@@ -446,7 +466,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
           </div>
         </template>
 
-        <h4 class="sub-title">静态信息</h4>
+        <h4 class="sub-title">{{ T.statCard.staticInfo }}</h4>
         <div class="kv-grid">
           <div v-for="row in infoRows" :key="row.label" class="kv">
             <span class="dim">{{ row.label }}</span>
@@ -472,11 +492,11 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
             />
           </div>
           <p class="mono sub-line">
-            {{ diskInfo ? fmtBytesPair(diskInfo.used, diskInfo.total) : '等待采样…' }}
+            {{ diskInfo ? fmtBytesPair(diskInfo.used, diskInfo.total) : T.detail.waiting }}
           </p>
         </div>
 
-        <h4 class="sub-title">容量与设备</h4>
+        <h4 class="sub-title">{{ T.detail.capacityDevices }}</h4>
         <div class="kv-grid">
           <div v-for="row in infoRows" :key="row.label" class="kv">
             <span class="dim">{{ row.label }}</span>
@@ -487,35 +507,35 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
 
       <!-- ── 网络 ───────────────────────────────────────────── -->
       <template v-else-if="kind === 'network'">
-        <p v-if="netIfaces.length === 0" class="dim">没有可显示的网卡。</p>
+        <p v-if="netIfaces.length === 0" class="dim">{{ T.detail.noNetifaces }}</p>
         <div v-for="n in netIfaces" :key="n.iface" class="iface">
           <div class="metric-row">
             <span class="iface-name mono">{{ n.iface }}</span>
-            <span class="mono dim">{{ netStatic(n.iface)?.ip4 || '无 IP' }}</span>
+            <span class="mono dim">{{ netStatic(n.iface)?.ip4 || T.detail.noIp }}</span>
           </div>
           <div class="kv-grid">
             <div class="kv">
-              <span class="dim">下行</span>
+              <span class="dim">{{ T.detail.down }}</span>
               <span class="mono">{{ fmtRate(n.rxBps) }}</span>
             </div>
             <div class="kv">
-              <span class="dim">上行</span>
+              <span class="dim">{{ T.detail.up }}</span>
               <span class="mono">{{ fmtRate(n.txBps) }}</span>
             </div>
             <div class="kv">
-              <span class="dim">累计接收</span>
+              <span class="dim">{{ T.detail.bytesReceived }}</span>
               <span class="mono">{{ fmtBytes(n.rxTotal) }}</span>
             </div>
             <div class="kv">
-              <span class="dim">累计发送</span>
+              <span class="dim">{{ T.detail.bytesSent }}</span>
               <span class="mono">{{ fmtBytes(n.txTotal) }}</span>
             </div>
             <div v-if="netStatic(n.iface)?.mac" class="kv">
-              <span class="dim">MAC</span>
+              <span class="dim">{{ T.detail.mac }}</span>
               <span class="mono">{{ netStatic(n.iface)?.mac }}</span>
             </div>
             <div v-if="netStatic(n.iface)?.speed" class="kv">
-              <span class="dim">链路速率</span>
+              <span class="dim">{{ T.detail.linkSpeed }}</span>
               <span class="mono">{{ netStatic(n.iface)?.speed }} Mbit/s</span>
             </div>
           </div>
@@ -524,7 +544,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
 
       <!-- ── GPU ────────────────────────────────────────────── -->
       <template v-else-if="kind === 'gpu'">
-        <p v-if="gpuViews.length === 0" class="dim">未检测到 GPU 设备。</p>
+        <p v-if="gpuViews.length === 0" class="dim">{{ T.detail.noGpu }}</p>
 
         <div v-for="gpu in gpuViews" :key="gpu.index" class="gpu">
           <div class="metric-row">
@@ -534,33 +554,30 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
 
           <!-- available 为空：只有静态信息，一行明确说明，绝不渲染空图表 -->
           <template v-if="gpu.available.length === 0">
-            <p class="gpu-note">该平台不暴露 GPU 动态指标</p>
+            <p class="gpu-note">{{ T.detail.gpuNoMetrics }}</p>
             <div class="kv-grid">
               <div class="kv">
-                <span class="dim">型号</span>
+                <span class="dim">{{ T.detail.model }}</span>
                 <span class="mono">{{ gpu.model }}</span>
               </div>
               <div class="kv">
-                <span class="dim">厂商</span>
+                <span class="dim">{{ T.detail.manufacturer }}</span>
                 <span class="mono">{{ gpu.stat?.vendor || gpu.vendor }}</span>
               </div>
               <div class="kv">
-                <span class="dim">显存</span>
+                <span class="dim">{{ T.detail.vram }}</span>
                 <span class="mono">{{ gpuVram(gpu) }}</span>
               </div>
               <div class="kv">
-                <span class="dim">驱动</span>
-                <span class="mono">{{ gpu.stat?.driverVersion || '未知' }}</span>
+                <span class="dim">{{ T.detail.driver }}</span>
+                <span class="mono">{{ gpu.stat?.driverVersion || T.common.unknown }}</span>
               </div>
               <div class="kv">
-                <span class="dim">总线</span>
-                <span class="mono">{{ gpu.stat?.bus || '未知' }}</span>
+                <span class="dim">{{ T.detail.bus }}</span>
+                <span class="mono">{{ gpu.stat?.bus || T.common.unknown }}</span>
               </div>
             </div>
-            <p class="dim tiny">
-              Windows / Linux + 独显环境下会显示使用率、温度、功耗等指标；
-              macOS 的 Apple Silicon 不提供这些数据。
-            </p>
+            <p class="dim tiny">{{ T.detail.gpuNote }}</p>
           </template>
 
           <!-- 有指标：只渲染 available 里列出的 -->
@@ -586,12 +603,12 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
       <template v-else>
         <div class="metric">
           <div class="metric-row">
-            <span class="metric-label">运行时长</span>
+            <span class="metric-label">{{ T.detail.runtime }}</span>
             <span class="metric-value mono">{{ fmtUptime(sys?.uptime) }}</span>
           </div>
         </div>
 
-        <h4 class="sub-title">主机信息</h4>
+        <h4 class="sub-title">{{ T.detail.hostInfo }}</h4>
         <div class="kv-grid">
           <div v-for="row in infoRows" :key="row.label" class="kv">
             <span class="dim">{{ row.label }}</span>
@@ -599,9 +616,7 @@ const cpuHistory = computed(() => monitor.trendCpu.slice(-40))
           </div>
         </div>
 
-        <p class="dim tiny">
-          实时采样时间 {{ snap ? new Date(snap.ts).toLocaleTimeString('zh-CN', { hour12: false }) : '—' }}
-        </p>
+        <p class="dim tiny">{{ sampleTimeText }}</p>
       </template>
     </div>
   </NModal>

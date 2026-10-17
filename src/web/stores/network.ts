@@ -18,6 +18,7 @@ import { api } from '@/api/client'
 import { NETWORK_MODE_KEY } from '@/api/settings'
 import { useSettingsStore } from '@/stores/settings'
 import { resolveUrl, describeSource, isLanHost } from '@shared/resolve-url'
+import { TEXT as T } from '@shared/text'
 import type { Item, NetworkMode, ResolvedUrl, ResolveSource } from '@shared/types'
 
 const MODES: readonly NetworkMode[] = ['lan', 'wan']
@@ -113,7 +114,7 @@ export const useNetworkStore = defineStore('network', () => {
   /** 开关「自动选择」—— 走 settings store 的乐观更新 */
   async function setAutoMode(next: boolean): Promise<boolean> {
     const ok = await settings.patch({ 'network.autoMode': next })
-    persistError.value = ok ? null : (settings.error ?? '写入失败')
+    persistError.value = ok ? null : (settings.error ?? T.network.persistFailed)
     return ok
   }
 

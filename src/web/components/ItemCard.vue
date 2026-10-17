@@ -13,6 +13,7 @@ import type { DropdownOption } from 'naive-ui'
 import { useNetworkStore } from '@/stores/network'
 import { useSettingsStore } from '@/stores/settings'
 import { useItemActions } from '@/composables/useItemActions'
+import { TEXT as T } from '@shared/text'
 import type { Item } from '@shared/types'
 import ItemIcon from './ItemIcon.vue'
 import FaviconGlyph from './FaviconGlyph.vue'
@@ -46,7 +47,12 @@ const locked = computed(() => props.item.networkPref !== 'auto')
 const unavailable = computed(() => resolved.value.url === null)
 
 const openModeLabel = computed(() =>
-  settings.openMode === 'self' ? '当前窗口打开' : '新窗口打开',
+  settings.openMode === 'self' ? T.item.openSelf : T.item.openNewTab,
+)
+
+/** 固定偏好卡片的说明：一句话里带当前强制的那一侧 */
+const pinnedTooltip = computed(() =>
+  T.item.pinnedTooltip(props.item.networkPref === 'lan' ? T.common.lan : T.common.wan),
 )
 
 /** 地址的主机部分，用于 tooltip 里显示「实际会打开什么」 */
@@ -63,9 +69,9 @@ const host = computed(() => {
 const iconSize = computed(() => (props.size === 'sm' ? 36 : props.size === 'lg' ? 56 : 50))
 
 const menuOptions: DropdownOption[] = [
-  { label: '编辑', key: 'edit' },
-  { label: '复制链接', key: 'copy' },
-  { label: '在新窗口打开', key: 'open-new' },
+  { label: T.item.edit, key: 'edit' },
+  { label: T.item.copyLink, key: 'copy' },
+  { label: T.item.openInNewWindow, key: 'open-new' },
 ]
 
 const menuVisible = ref(false)
@@ -130,7 +136,7 @@ function activate(): void {
     ]"
     role="link"
     tabindex="0"
-    :aria-label="editing ? `${item.title}（点击编辑）` : `${item.title}（${openModeLabel}）`"
+    :aria-label="editing ? T.item.ariaEdit(item.title) : T.item.ariaOpen(item.title, openModeLabel)"
     @click="activate"
     @keydown.enter.prevent="activate"
     @keydown.space.prevent="activate"
@@ -153,10 +159,10 @@ function activate(): void {
           </span>
         </template>
         <span class="tip">
-          实际使用「{{ sourceLabel }}」地址
+          {{ T.item.sourceTooltip(sourceLabel) }}
           <template v-if="host">（{{ host }}）</template>
           <br />
-          与当前全局模式不一致时才显示此角标
+          {{ T.item.badgeTooltip }}
         </span>
       </NTooltip>
 
@@ -165,8 +171,7 @@ function activate(): void {
           <FaviconGlyph name="lock" :size="12" class="lock" />
         </template>
         <span class="tip">
-          该卡片固定使用{{ item.networkPref === 'lan' ? '内网' : '外网' }}地址，
-          不随全局模式切换
+          {{ pinnedTooltip }}
         </span>
       </NTooltip>
 
@@ -174,8 +179,8 @@ function activate(): void {
         v-if="editing"
         class="card-remove"
         type="button"
-        :title="`移除「${item.title}」`"
-        :aria-label="`移除「${item.title}」`"
+        :title="T.item.removeAria(item.title)"
+        :aria-label="T.item.removeAria(item.title)"
         @click.stop="removeCard"
       >
         <FaviconGlyph name="close" :size="13" />

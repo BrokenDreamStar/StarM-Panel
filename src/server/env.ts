@@ -2,7 +2,11 @@
  * 运行时配置解析。
  *
  * 数据目录解析优先级（见 docs/DESIGN.md §11.1）：
- *   --data-dir  >  STARM_DATA_DIR  >  ./data  >  ~/.starm-panel
+ *   --data-dir  >  STARM_DATA_DIR  >  ~/.starm-panel
+ *
+ * 默认落在用户主目录而不是「当前工作目录」，是因为单文件二进制的启动目录
+ * 完全不可控（systemd / 双击 / 计划任务各不相同），用 cwd 会让同一次部署在
+ * 不同启动方式下看到不同的数据；`bun run dev` 这类开发场景显式传 --data-dir。
  */
 import { homedir } from 'node:os'
 import { resolve, join, isAbsolute } from 'node:path'
@@ -24,11 +28,17 @@ StarM Panel —— 轻量自托管导航面板
 选项：
   --port <number>        监听端口（默认 3002）
   --host <string>        监听地址（默认 0.0.0.0）
-  --data-dir <path>      数据目录（默认 ./data）
+  --data-dir <path>      数据目录（默认 ~/.starm-panel）
   --base-url <path>      子路径部署前缀，例如 /panel（默认 /）
   --log-level <level>    debug | info | warn | error（默认 info）
+  --reset-auth           忘记管理员密码时用：清除口令并要求重新设置，然后退出
   --version              显示版本
   --help                 显示帮助
+
+环境变量：
+  STARM_PORT / STARM_HOST / STARM_DATA_DIR / STARM_BASE_URL   同上
+  STARM_TRUST_PROXY=1    信任反向代理传来的 X-Forwarded-*（限流 IP 与 Secure Cookie）
+  STARM_SECURE_COOKIE=1  强制会话 Cookie 带 Secure（反代终结 TLS 时用）
 `.trim()
 
 interface ParsedArgs {
@@ -37,6 +47,7 @@ interface ParsedArgs {
   dataDir?: string
   basePath?: string
   logLevel?: ServerConfig['logLevel']
+  resetAuth?: boolean
   help?: boolean
   version?: boolean
 }
@@ -77,6 +88,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         out.logLevel = v as ServerConfig['logLevel']
         break
       }
+      case '--reset-auth':
+        out.resetAuth = true
+        break
       case '--help':
       case '-h':
         out.help = true
@@ -105,11 +119,11 @@ export function resolveConfig(argv: string[] = process.argv.slice(2)): {
   config: ServerConfig
   help: boolean
   version: boolean
+  resetAuth: boolean
 } {
   const args = parseArgs(argv)
 
-  const dataDirRaw =
-    args.dataDir ?? process.env['STARM_DATA_DIR'] ?? join(process.cwd(), 'data')
+  const dataDirRaw = args.dataDir ?? process.env['STARM_DATA_DIR'] ?? defaultDataDir()
 
   const config: ServerConfig = {
     port: args.port ?? Number(process.env['STARM_PORT'] ?? 3002),
@@ -119,7 +133,12 @@ export function resolveConfig(argv: string[] = process.argv.slice(2)): {
     logLevel: args.logLevel ?? 'info',
   }
 
-  return { config, help: Boolean(args.help), version: Boolean(args.version) }
+  return {
+    config,
+    help: Boolean(args.help),
+    version: Boolean(args.version),
+    resetAuth: Boolean(args.resetAuth),
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -138,6 +157,7 @@ export function getConfig(): ServerConfig {
 }
 
 
+/** 默认数据目录：`~/.starm-panel`（内含 db/ 与 bg/，见 docs/DESIGN.md §11.1） */
 export function defaultDataDir(): string {
   return join(homedir(), '.starm-panel')
 }

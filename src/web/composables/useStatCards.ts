@@ -28,6 +28,7 @@ import {
   type DeviceSlot,
   type StatCardRef,
 } from '@/utils/stat-cards'
+import { TEXT as T } from '@shared/text'
 
 export type { StatCardRef, DeviceSlot } from '@/utils/stat-cards'
 
@@ -49,43 +50,43 @@ export const STAT_CARD_META: Record<
   cpu: {
     label: 'CPU',
     title: 'CPU',
-    name: 'CPU 使用率',
-    hint: '总使用率与每核心明细',
+    name: T.statCards.cpuName,
+    hint: T.statCards.cpuHint,
     icon: 'cpu',
   },
   memory: {
     label: 'RAM',
-    title: '内存',
-    name: '内存',
-    hint: '已用 / 总量与交换分区',
+    title: T.statCards.memoryTitle,
+    name: T.statCards.memoryName,
+    hint: T.statCards.memoryHint,
     icon: 'memory',
   },
   disk: {
     label: '/',
-    title: '磁盘',
-    name: '磁盘',
-    hint: '已用 / 总量与读写速率',
+    title: T.statCards.diskTitle,
+    name: T.statCards.diskName,
+    hint: T.statCards.diskHint,
     icon: 'drive',
   },
   network: {
     label: 'NET',
-    title: '网络',
-    name: '网络',
-    hint: '该网卡的上下行速率',
+    title: T.statCards.networkTitle,
+    name: T.statCards.networkName,
+    hint: T.statCards.networkHint,
     icon: 'wifi',
   },
   gpu: {
     label: 'GPU',
     title: 'GPU',
     name: 'GPU',
-    hint: '使用率与显存',
+    hint: T.statCards.gpuHint,
     icon: 'gpu',
   },
   system: {
     label: 'SYS',
-    title: '系统',
-    name: '系统信息',
-    hint: '运行时长、主机与内核版本',
+    title: T.statCards.systemTitle,
+    name: T.statCards.systemName,
+    hint: T.statCards.systemHint,
     icon: 'server',
   },
 }
@@ -95,9 +96,9 @@ export function cardDisplayName(kind: MonitorCardKind, device?: string): string 
   if (device === undefined) return STAT_CARD_META[kind].name
   switch (kind) {
     case 'disk':
-      return `磁盘 ${device}`
+      return T.statCards.diskDevice(device)
     case 'network':
-      return `网卡 ${device}`
+      return T.statCards.netifaceDevice(device)
     case 'gpu':
       return `GPU #${device}`
     default:
@@ -159,9 +160,9 @@ export function useStatCards() {
   function slots(kind: MonitorCardKind): readonly DeviceSlot[] {
     switch (kind) {
       case 'disk':
-        return mounts.value.map((m) => ({ device: m, hint: '该挂载点的容量与读写速率' }))
+        return mounts.value.map((m) => ({ device: m, hint: T.statCards.mountHint }))
       case 'network':
-        return ifaces.value.map((i) => ({ device: i, hint: '该网卡的上行 / 下行速率' }))
+        return ifaces.value.map((i) => ({ device: i, hint: T.statCards.ifaceHint }))
       case 'gpu':
         return gpuSlots.value
       default:

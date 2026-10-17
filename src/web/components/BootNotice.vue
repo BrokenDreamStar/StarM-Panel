@@ -6,6 +6,7 @@
  * 或者 /api/bootstrap 返回了错误结构。
  */
 import { NButton, NSpin } from 'naive-ui'
+import { TEXT as T } from '@shared/text'
 import FaviconGlyph from './FaviconGlyph.vue'
 
 defineProps<{
@@ -21,16 +22,15 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
     <div class="boot-card card">
       <div class="boot-head">
         <FaviconGlyph name="cloud-off" :size="20" />
-        <strong>无法加载面板数据</strong>
+        <strong>{{ T.boot.title }}</strong>
       </div>
       <p class="mono dim msg">{{ error }}</p>
       <p class="dim tiny">
-        请确认后端已启动（默认 <span class="mono">http://127.0.0.1:3002</span>），
-        然后重试。当前页面在离线状态下仍会保留本地缓存的网络模式与主题。
+        {{ T.boot.hintBefore }}<span class="mono">{{ T.boot.defaultBackendUrl }}</span>{{ T.boot.hintAfter }}
       </p>
       <NSpin v-if="booting" size="small" />
       <NButton size="small" type="primary" :disabled="booting" @click="emit('retry')">
-        重试
+        {{ T.boot.retry }}
       </NButton>
     </div>
   </div>

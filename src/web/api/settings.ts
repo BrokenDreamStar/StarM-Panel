@@ -66,14 +66,17 @@ export const SETTINGS_DEFAULTS = {
 
   'monitor.interval': 1000,
   'monitor.hiddenInterval': 10_000,
-  'monitor.gpuInterval': 3000,
   /**
    * 首页「系统状态」区展示哪些卡片，数组顺序 = 展示顺序（由首页增删 / 拖拽写入）。
    * 字符串写法 = 兼容旧值；新值一律是 `{ kind, device }`（见 MonitorCardEntry）。
    */
   'monitor.cards': [...MONITOR_CARD_KINDS] as Array<MonitorCardKind | MonitorCardEntry>,
 
-  'auth.enabled': false,
+  /**
+   * 登录保护总开关（默认开启，与后端 DEFAULT_SETTINGS 一致）。
+   * 登录页读不到服务端设置时，这个默认值保证不会把「已开启」错显示成「未启用」。
+   */
+  'auth.enabled': true,
 
   'ui.showMonitor': true,
   'ui.cardSize': 'md' as 'sm' | 'md' | 'lg',

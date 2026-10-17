@@ -6,7 +6,7 @@
   "module": "src/server/index.ts",
   "scripts": {
     "dev": "bun run --parallel dev:server dev:web",
-    "dev:server": "bun --watch src/server/index.ts",
+    "dev:server": "bun --watch src/server/index.ts --data-dir data",
     "dev:web": "vite",
     "build": "bun run build:web && bun run build:assets && bun run build:bin",
     "build:web": "vite build",

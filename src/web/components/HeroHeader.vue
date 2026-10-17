@@ -2,22 +2,25 @@
 /**
  * 英雄区 —— 大号标题 + 时钟（HH:MM）与日期（9-29 星期二）。
  *
- * 标题与时钟之间不再画竖分隔线（去线留白），只用间距和字重差表达「同一组、
- * 两种信息」。时钟用 setInterval 每秒走一格；`ui.showClock` 为 false 时整块不渲染。
+ * 标题与时钟之间用一条细竖线分隔（参考 sun-panel：线高约等于时钟数字高度，
+ * 上下留白，线宽 2px），配合间距与字重差表达「同一组、两种信息」。竖线只在
+ * 时钟渲染时出现（`ui.showClock` 为 false 时整块不渲染），窄屏上下堆叠时隐藏。
+ * 时钟用 setInterval 每秒走一格。
  * 日期刻意手写星期表，不用 toLocaleDateString —— 后者在不同浏览器 / locale
  * 下的输出格式（星期几 vs 周几）并不一致。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { TEXT as T } from '@shared/text'
 
 const props = withDefaults(
   defineProps<{
     title?: string
     showClock?: boolean
   }>(),
-  { title: 'StarM Panel', showClock: true },
+  { title: T.router.brand, showClock: true },
 )
 
-const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+const WEEKDAYS = T.header.weekdays
 
 const now = ref(new Date())
 let timer: ReturnType<typeof setInterval> | null = null
@@ -50,6 +53,7 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
   <header class="hero">
     <h1 class="hero-title">{{ label }}</h1>
     <template v-if="showClock">
+      <span class="hero-divider" aria-hidden="true" />
       <div class="hero-clock">
         <time class="clock-time mono" :datetime="now.toISOString()">{{ time }}</time>
         <span class="clock-date">{{ date }}</span>
@@ -63,7 +67,8 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: clamp(20px, 3vw, 34px);
+  /* 三件套：标题 │ 时钟，两侧间距由竖线居中摊开，故比无竖线时更紧 */
+  gap: clamp(11px, 1.2vw, 15px);
   padding: clamp(56px, 10vh, 104px) 8px clamp(34px, 5.5vh, 58px);
   color: var(--wp-text);
   text-align: center;
@@ -75,6 +80,19 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
   line-height: 1.1;
   letter-spacing: -0.02em;
   overflow-wrap: anywhere;
+}
+
+/* 竖分隔线：字号跟随时钟缩放，高度 ≈ 时钟数字高（0.72em），
+   两端齐平不渐隐，颜色取壁纸直排文字色并略降透明度 */
+.hero-divider {
+  flex: none;
+  align-self: center;
+  width: 2px;
+  height: 0.72em;
+  font-size: clamp(23px, 2.7vw, 34px);
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.85;
 }
 
 .hero-clock {
@@ -101,6 +119,11 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
   .hero {
     flex-direction: column;
     gap: 14px;
+  }
+
+  /* 上下堆叠时竖线没有分隔意义，直接隐藏 */
+  .hero-divider {
+    display: none;
   }
 
   .hero-clock {

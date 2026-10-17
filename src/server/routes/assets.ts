@@ -6,7 +6,8 @@ import { desc, eq, like } from 'drizzle-orm'
 import { db } from '../db'
 import { assets, items } from '../db/schema'
 import { HttpError } from '../middleware/error'
-import { parseKind, storeAsset, toAsset } from '../services/assets'
+import { parseKind, readAssetBytes, deleteAsset, storeAsset, toAsset } from '../services/assets'
+import { getSetting } from '../services/settings'
 
 export const assetRoutes = new Hono()
   .get('/', (c) => {
@@ -18,6 +19,7 @@ export const assetRoutes = new Hono()
         name: assets.name,
         mime: assets.mime,
         size: assets.size,
+        fileName: assets.fileName,
         createdAt: assets.createdAt,
       })
       .from(assets)
@@ -48,12 +50,15 @@ export const assetRoutes = new Hono()
   .get('/:id', (c) => {
     const id = c.req.param('id')
     const row = db
-      .select({ mime: assets.mime, bytes: assets.bytes })
+      .select({ mime: assets.mime, bytes: assets.bytes, fileName: assets.fileName })
       .from(assets)
       .where(eq(assets.id, id))
       .get()
 
     if (!row) throw new HttpError(404, 'NOT_FOUND', `资源 ${id} 不存在`)
+
+    // 图标 / favicon 在 BLOB 里，壁纸在 bg/ 文件里 —— 差异收敛在这一处
+    const bytes = readAssetBytes(row)
 
     const headers: Record<string, string> = {
       'content-type': row.mime,
@@ -70,15 +75,18 @@ export const assetRoutes = new Hono()
         "default-src 'none'; style-src 'unsafe-inline'; sandbox"
     }
 
-    // TS 的 BodyInit 不接受 Node 的 Buffer，转成 Uint8Array
-    return new Response(new Uint8Array(row.bytes), { headers })
+    return new Response(bytes, { headers })
   })
 
   .delete('/:id', (c) => {
     const id = c.req.param('id')
 
-    const exists = db.select({ id: assets.id }).from(assets).where(eq(assets.id, id)).get()
-    if (!exists) throw new HttpError(404, 'NOT_FOUND', `资源 ${id} 不存在`)
+    const row = db
+      .select({ id: assets.id, fileName: assets.fileName })
+      .from(assets)
+      .where(eq(assets.id, id))
+      .get()
+    if (!row) throw new HttpError(404, 'NOT_FOUND', `资源 ${id} 不存在`)
 
     // 先检查引用，避免删除后卡片图标变成裂图
     const refs = db
@@ -93,6 +101,23 @@ export const assetRoutes = new Hono()
       })
     }
 
-    db.delete(assets).where(eq(assets.id, id)).run()
+    // 首页壁纸也可能正引用它 —— 壁纸是文件直链（/bg/<文件名>），删了就是背景
+    // 直接变白，和卡片图标引用一样得拦下来。（非 asset 类型时那个值不再生效，
+    // 不拦）
+    const wallpaperValue = getSetting('wallpaper.value')
+    const wallpaperUsingThis =
+      getSetting('wallpaper.type') === 'asset' &&
+      typeof wallpaperValue === 'string' &&
+      (wallpaperValue === `/api/assets/${id}` ||
+        (row.fileName !== null && wallpaperValue === `/bg/${row.fileName}`))
+
+    if (wallpaperUsingThis) {
+      throw new HttpError(409, 'IN_USE', '该资源正被首页壁纸使用', {
+        wallpaper: wallpaperValue,
+      })
+    }
+
+    // 壁纸会连带删掉 bg/ 下的文件
+    deleteAsset(id)
     return c.body(null, 204)
   })

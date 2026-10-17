@@ -1,9 +1,12 @@
 /**
  * 资源存储服务。
  *
- * 二进制直接存 SQLite BLOB（见 docs/DESIGN.md §2.2 ADR-005）：
- * 整个应用状态收敛为 data/app.db + data/secret.key 两个文件，
- * 备份即复制，不存在「数据库与文件系统不同步」问题。
+ * 两种存储后端：
+ *   - **图标 / favicon** → SQLite BLOB（见 docs/DESIGN.md §2.2 ADR-005）：
+ *     体积小、数量多，随库一起备份最省事。
+ *   - **壁纸** → 文件（`<data-dir>/bg/<原始文件名>`，见 services/bg-store.ts）：
+ *     动辄几 MB，是数据库体积的主要来源；落盘后可直接用看图器打开。
+ *     数据库只留元数据，`assets.file_name` 指向文件。
  *
  * id 为内容哈希，因此相同内容重复上传自动去重。
  */
@@ -12,6 +15,7 @@ import { db } from '../db'
 import { assets } from '../db/schema'
 import { HttpError } from '../middleware/error'
 import type { Asset, AssetKind } from '@shared/types'
+import { bgFileExists, deleteBgFile, readBgFile, writeBgFile } from './bg-store'
 
 /** 单文件体积上限；wallpaper 不设限 */
 export const SIZE_LIMITS: Record<AssetKind, number> = {
@@ -112,8 +116,9 @@ export function toAsset(row: {
   mime: string
   size: number
   createdAt: number
+  fileName?: string | null
 }): Asset {
-  return {
+  const asset: Asset = {
     id: row.id,
     kind: row.kind as AssetKind,
     name: row.name,
@@ -121,6 +126,10 @@ export function toAsset(row: {
     size: row.size,
     createdAt: row.createdAt,
   }
+  // 壁纸有文件直链（/bg/<文件名>），前端「图片地址」直接用它；
+  // 图标 / favicon 在库里，只能走 /api/assets/<id>。
+  if (row.fileName) asset.bgUrl = `/bg/${row.fileName}`
+  return asset
 }
 
 export function parseKind(raw: unknown): AssetKind {
@@ -129,11 +138,12 @@ export function parseKind(raw: unknown): AssetKind {
 }
 
 /**
- * 存入 BLOB 并返回元数据；内容已存在时直接复用（去重）。
+ * 存入存储后端并返回元数据；内容已存在时直接复用（去重）。
  *
  * MIME **由字节内容嗅探得出**，不接受客户端声明（见 sniffImageMime 的说明）。
  * 副作用：同一份字节以不同 kind 上传时会复用同一条记录，kind 保持首次上传的值
- * —— 这是内容寻址存储的预期行为，避免重复占用空间。
+ * —— 这是内容寻址存储的预期行为，避免重复占用空间。因此「先当图标传过、再当
+ * 壁纸传」的那份字节留在数据库里，不会额外在 bg/ 落一份文件。
  *
  * @param declaredMime 客户端声明的类型，仅用于错误提示，不参与判定
  */
@@ -168,28 +178,83 @@ export function storeAsset(
 
   const id = contentId(bytes)
   const existing = db.select().from(assets).where(eq(assets.id, id)).get()
-  if (existing) return toAsset(existing)
+  if (existing) {
+    // bg/ 里的文件被人手工删掉时，命中去重的「重新上传」会修不好这张壁纸
+    // （前端没有资源管理界面，用户没有别的恢复入口）—— 这里顺手补写回去。
+    if (existing.kind === 'wallpaper' && !(existing.fileName && bgFileExists(existing.fileName))) {
+      const fileName = writeBgFile(bytes, existing.name, mime)
+      // name 与文件名保持同一套（壁纸的 name 就是 bg/ 下的文件名）
+      db.update(assets).set({ fileName, name: fileName, bytes: null }).where(eq(assets.id, id)).run()
+    }
+    return toAsset(existing)
+  }
 
-  const row = db
-    .insert(assets)
-    .values({
-      id,
-      kind,
-      name,
-      mime,
-      size: bytes.byteLength,
-      bytes: Buffer.from(bytes),
-      createdAt: Date.now(),
-    })
-    .returning({
-      id: assets.id,
-      kind: assets.kind,
-      name: assets.name,
-      mime: assets.mime,
-      size: assets.size,
-      createdAt: assets.createdAt,
-    })
-    .get()
+  // 壁纸：先落盘再写库；图标 / favicon：写进 BLOB。
+  // 壁纸的 name 存**实际落盘的文件名**（清洗 + 重名后缀之后的名字），
+  // 这样 /bg/<name> 永远指向真实存在的文件，上传响应也能告诉用户存成了什么名。
+  const fileName = kind === 'wallpaper' ? writeBgFile(bytes, name, mime) : null
 
-  return toAsset(row)
+  try {
+    const row = db
+      .insert(assets)
+      .values({
+        id,
+        kind,
+        name: fileName ?? name,
+        mime,
+        size: bytes.byteLength,
+        bytes: fileName ? null : Buffer.from(bytes),
+        fileName,
+        createdAt: Date.now(),
+      })
+      .returning({
+        id: assets.id,
+        kind: assets.kind,
+        name: assets.name,
+        mime: assets.mime,
+        size: assets.size,
+        fileName: assets.fileName,
+        createdAt: assets.createdAt,
+      })
+      .get()
+
+    return toAsset(row)
+  } catch (err) {
+    // 写库失败就把刚落盘的文件收回，别留下没有记录指向的孤儿图
+    if (fileName) deleteBgFile(fileName)
+    throw err
+  }
+}
+
+/**
+ * 读取资源字节（图标 / favicon 从 BLOB，壁纸从 bg/ 文件）。
+ *
+ * 壁纸文件被手工删掉时先回落到库里的字节（历史数据可能两者都有），
+ * 都取不到才报错。
+ */
+export function readAssetBytes(row: {
+  bytes?: Buffer | Uint8Array | null
+  fileName?: string | null
+}): Uint8Array<ArrayBuffer> {
+  if (row.fileName) {
+    const file = readBgFile(row.fileName)
+    if (file) return file
+  }
+  if (row.bytes && row.bytes.byteLength > 0) return new Uint8Array(row.bytes)
+  throw new HttpError(410, 'ASSET_BYTES_MISSING', '资源文件已丢失，请重新上传')
+}
+
+/**
+ * 删除资源：先删数据库行，再删壁纸文件。
+ *
+ * 顺序是刻意的 —— 反过来（先删文件）一旦写库失败就会留下指向空文件的记录；
+ * 而文件删不掉时只是多一个孤儿文件，不影响任何接口的返回结果。
+ */
+export function deleteAsset(id: string): boolean {
+  const row = db.select({ fileName: assets.fileName }).from(assets).where(eq(assets.id, id)).get()
+  if (!row) return false
+
+  db.delete(assets).where(eq(assets.id, id)).run()
+  if (row.fileName) deleteBgFile(row.fileName)
+  return true
 }

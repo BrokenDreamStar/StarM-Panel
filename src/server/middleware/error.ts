@@ -14,6 +14,8 @@ export class HttpError extends Error {
     public readonly code: string,
     message: string,
     public readonly details?: unknown,
+    /** 需要一并写回的响应头（如 429 的 Retry-After） */
+    public readonly headers?: Record<string, string>,
   ) {
     super(message)
     this.name = 'HttpError'
@@ -26,6 +28,7 @@ function body(code: string, message: string, details?: unknown): ApiError {
 
 export const onError: ErrorHandler = (err, c: Context) => {
   if (err instanceof HttpError) {
+    for (const [name, value] of Object.entries(err.headers ?? {})) c.header(name, value)
     return c.json(body(err.code, err.message, err.details), err.status as 400)
   }
 

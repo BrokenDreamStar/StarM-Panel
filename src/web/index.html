@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
+    <!-- 站点图标：Vite 的 public 目录原样拷进 dist/ 根，由 static.ts 从嵌入资源里响应
+         （public/favicon.ico → /favicon.ico，无需哈希也不进 assets/） -->
+    <link rel="icon" href="/favicon.ico" sizes="64x64" />
+    <!-- iOS 主屏图标：iOS 不支持 .ico，且会自己套圆角，故给出铺满的四方形 PNG -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>StarM Panel</title>
   </head>
   <body>

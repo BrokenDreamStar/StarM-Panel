@@ -9,12 +9,38 @@
  */
 import type {
   Asset,
+  AuthState,
   BootstrapPayload,
   Group,
   Item,
   SystemSnapshot,
   SystemStaticInfo,
 } from '@shared/types'
+import { TEXT as T } from '@shared/text'
+
+/**
+ * 认证失效的全局广播事件名。
+ *
+ * 任何请求拿到 401（未登录 / 待初始化）都会触发它，外壳据此立刻切回登录页，
+ * 不需要每个调用点各自处理 —— 会话过期时往往同时有 SSE、轮询、
+ * 用户操作三条线在跑，逐个 catch 是漏网的根源。
+ */
+export const AUTH_REQUIRED_EVENT = 'starm:auth-required'
+
+export interface AuthRequiredDetail {
+  code: 'UNAUTHENTICATED' | 'SETUP_REQUIRED'
+}
+
+function notifyAuthRequired(err: ApiError): void {
+  if (err.status !== 401) return
+  if (err.code !== 'UNAUTHENTICATED' && err.code !== 'SETUP_REQUIRED') return
+  try {
+    const detail: AuthRequiredDetail = { code: err.code }
+    window.dispatchEvent(new CustomEvent<AuthRequiredDetail>(AUTH_REQUIRED_EVENT, { detail }))
+  } catch {
+    // 非浏览器环境（单测）里没有 window —— 静默跳过
+  }
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -33,7 +59,7 @@ export class ApiError extends Error {
 /** 从任意响应中尽力提取后端错误结构 */
 async function toApiError(res: Response): Promise<ApiError> {
   let code = 'HTTP_' + res.status
-  let message = `请求失败（HTTP ${res.status}）`
+  let message = T.api.requestFailed(res.status)
   let details: unknown
 
   try {
@@ -73,7 +99,13 @@ export function buildHeaders(init?: RequestInit): Record<string, string> {
   return { ...headers, ...(init?.headers as Record<string, string> | undefined) }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * 发请求，并把非 2xx 统一转成 ApiError。
+ *
+ * 与 `request()` 分开，是因为备份导出要读响应头（content-disposition 里的
+ * 文件名），而不是解析后的 body —— 但两条路径的错误语义必须完全一致。
+ */
+async function send(path: string, init?: RequestInit): Promise<Response> {
   let res: Response
   try {
     res = await fetch(path, { ...init, headers: buildHeaders(init) })
@@ -82,7 +114,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(0, 'NETWORK_ERROR', e instanceof Error ? e.message : String(e))
   }
 
-  if (!res.ok) throw await toApiError(res)
+  if (!res.ok) {
+    const err = await toApiError(res)
+    notifyAuthRequired(err)
+    throw err
+  }
+  return res
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await send(path, init)
   if (res.status === 204) return undefined as T
 
   const text = await res.text()
@@ -122,6 +163,63 @@ export interface GroupInput {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 备份（导入 / 导出）
+// ─────────────────────────────────────────────────────────────
+
+export type BackupImportMode = 'merge' | 'replace'
+
+/** 导入结果的分类计数，用于成功提示 */
+export interface BackupImportResult {
+  ok: boolean
+  mode: BackupImportMode
+  imported: { groups: number; items: number; assets: number; settings: number }
+}
+
+export interface BackupExport {
+  /** 下载文件名：以后端 content-disposition 为准，拿不到时前端按同一规则兜底 */
+  filename: string
+  /** 备份 JSON 原文，原样写进文件即可 */
+  text: string
+}
+
+/**
+ * 从 `content-disposition` 解析文件名。
+ *
+ * 服务端已经给了文件名（见 routes/backup.ts），前端不该再拼一份 ——
+ * 两处各写一套迟早会漂移。非标准头（网关改写、缺字段）时返回 null，
+ * 由调用方兜底。
+ */
+export function parseDispositionFilename(disposition: string | null): string | null {
+  if (!disposition) return null
+  // RFC 5987 形式优先：filename*=UTF-8''%E5%A4%87%E4%BB%BD.json
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (encoded?.[1]) {
+    try {
+      return decodeURIComponent(encoded[1].trim())
+    } catch {
+      // 编码坏了就退回下面按普通形式解析
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(disposition)
+  return plain?.[1]?.trim() || null
+}
+
+/** 后端文件名口径的兜底副本，只在响应头不可用时使用 */
+function fallbackBackupFilename(): string {
+  return `starm-panel-backup-${new Date().toISOString().slice(0, 10)}.json`
+}
+
+/** 导出备份：取回 JSON 原文与文件名，交给调用方决定怎么落盘 */
+async function exportBackup(withAssets: boolean): Promise<BackupExport> {
+  const res = await send(`/api/backup/export${withAssets ? '?assets=true' : ''}`)
+  return {
+    filename:
+      parseDispositionFilename(res.headers.get('content-disposition')) ?? fallbackBackupFilename(),
+    text: await res.text(),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // 接口
 // ─────────────────────────────────────────────────────────────
 
@@ -132,6 +230,23 @@ export const api = {
     ),
 
   bootstrap: () => request<BootstrapPayload>('/api/bootstrap'),
+
+  /**
+   * 管理员认证（单账号）。这些接口是门禁内唯一允许匿名访问的一批 ——
+   * 登录页需要它们在未登录状态下也能调用。
+   */
+  auth: {
+    state: () => request<AuthState>('/api/auth/state'),
+    /** 首次设定管理员密码（仅在尚未设置时可用） */
+    setup: (password: string) => request<AuthState>('/api/auth/setup', json({ password })),
+    login: (password: string) => request<AuthState>('/api/auth/login', json({ password })),
+    logout: () => request<AuthState>('/api/auth/logout', { method: 'POST' }),
+    /** 修改密码：需要当前密码，成功后其它设备全部强制重新登录 */
+    changePassword: (currentPassword: string, newPassword: string) =>
+      request<AuthState>('/api/auth/password', json({ currentPassword, newPassword })),
+    /** 退出所有设备（会话世代自增） */
+    revokeAll: () => request<AuthState>('/api/auth/revoke-all', { method: 'POST' }),
+  },
 
   groups: {
     list: () => request<Group[]>('/api/groups'),
@@ -183,8 +298,23 @@ export const api = {
       // 刻意不设 content-type：浏览器需要自己加 multipart boundary
       return request<Asset & { url: string }>('/api/assets', { method: 'POST', body: form })
     },
+    /** 资源列表（不含二进制）。壁纸项带 bgUrl，可直接用作图片地址 */
+    list: (kind?: 'icon' | 'wallpaper' | 'favicon') =>
+      request<Asset[]>(`/api/assets${kind ? `?kind=${kind}` : ''}`),
     remove: (id: string) => request<void>(`/api/assets/${id}`, { method: 'DELETE' }),
     url: (id: string) => `/api/assets/${id}`,
+  },
+
+  /**
+   * 数据迁移：导出 / 导入备份。
+   *
+   * 导入的 `payload` 是备份文件解析后的原文，结构与校验都在后端
+   * （routes/backup.ts 的 BackupSchema），前端只负责选文件与模式。
+   */
+  backup: {
+    export: (opts?: { assets?: boolean }) => exportBackup(opts?.assets === true),
+    import: (payload: unknown, mode: BackupImportMode = 'merge') =>
+      request<BackupImportResult>(`/api/backup/import?mode=${mode}`, json(payload)),
   },
 
   /** 服务端抓取 favicon（M4）—— 抓不到就抛错，前端只提示失败 */

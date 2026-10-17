@@ -26,6 +26,7 @@ import {
   NSelect,
   useMessage,
 } from 'naive-ui'
+import { TEXT as T } from '@shared/text'
 import { api, ApiError } from '@/api/client'
 import { useDeleteConfirm } from '@/composables/useDeleteConfirm'
 import { useItemsStore } from '@/stores/items'
@@ -62,7 +63,7 @@ const MAX_ICON_BYTES = 256 * 1024
  */
 const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
   {
-    group: '通用',
+    group: T.card.iconGroups.common,
     names: [
       'mdi:home', 'mdi:home-outline', 'mdi:apps', 'mdi:grid', 'mdi:view',
       'mdi:eye', 'mdi:dashboard', 'mdi:link', 'mdi:external', 'mdi:open',
@@ -74,7 +75,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '操作与状态',
+    group: T.card.iconGroups.actions,
     names: [
       'mdi:edit', 'mdi:pencil', 'mdi:trash', 'mdi:delete', 'mdi:close',
       'mdi:close-circle', 'mdi:check', 'mdi:refresh', 'mdi:reload', 'mdi:sync',
@@ -87,7 +88,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '账户与通讯',
+    group: T.card.iconGroups.accounts,
     names: [
       'mdi:account', 'mdi:user', 'mdi:account-group', 'mdi:account-key', 'mdi:login',
       'mdi:logout', 'mdi:email', 'mdi:send', 'mdi:chat', 'mdi:message-text',
@@ -95,7 +96,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '系统与品牌',
+    group: T.card.iconGroups.system,
     names: [
       'mdi:linux', 'mdi:apple', 'simple-icons:windows', 'mdi:android', 'mdi:debian',
       'mdi:ubuntu', 'mdi:fedora', 'mdi:arch', 'mdi:centos', 'mdi:redhat',
@@ -106,7 +107,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '运维与服务',
+    group: T.card.iconGroups.ops,
     names: [
       'simple-icons:portainer', 'simple-icons:jenkins', 'mdi:ansible', 'mdi:terraform', 'simple-icons:consul',
       'simple-icons:vault', 'mdi:gitlab', 'mdi:github', 'mdi:bitbucket', 'simple-icons:gitea',
@@ -116,7 +117,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '存储与数据库',
+    group: T.card.iconGroups.storage,
     names: [
       'mdi:nas', 'mdi:database', 'mdi:storage', 'mdi:drive', 'mdi:harddisk',
       'mdi:harddisk-plus', 'mdi:sd', 'mdi:usb-flash-drive', 'mdi:cloud', 'mdi:cloud-sync',
@@ -126,7 +127,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '网络',
+    group: T.card.iconGroups.network,
     names: [
       'mdi:router', 'mdi:lan', 'mdi:sitemap', 'mdi:globe', 'mdi:earth',
       'mdi:wifi', 'mdi:wifi-off', 'mdi:access-point', 'mdi:ethernet', 'mdi:bluetooth',
@@ -134,7 +135,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '媒体与设备',
+    group: T.card.iconGroups.media,
     names: [
       'mdi:plex', 'simple-icons:jellyfin', 'mdi:emby', 'mdi:kodi', 'mdi:vlc',
       'mdi:youtube', 'mdi:spotify', 'mdi:movie', 'mdi:film', 'mdi:music',
@@ -147,7 +148,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '硬件与图表',
+    group: T.card.iconGroups.hardware,
     names: [
       'mdi:cpu', 'mdi:memory', 'mdi:gpu', 'mdi:thermometer', 'mdi:lightbulb',
       'mdi:vacuum', 'mdi:chart', 'mdi:chart-line', 'mdi:speed', 'mdi:gauge',
@@ -155,7 +156,7 @@ const ICON_LIBRARY: Array<{ group: string; names: string[] }> = [
     ],
   },
   {
-    group: '生活与出行',
+    group: T.card.iconGroups.life,
     names: [
       'mdi:train', 'mdi:car', 'mdi:airplane', 'mdi:bike', 'mdi:leaf',
       'mdi:tree', 'mdi:fire', 'mdi:snowflake', 'mdi:weather-sunny', 'mdi:weather-night',
@@ -178,15 +179,17 @@ const form = ref({
 })
 
 /**
- * 一级菜单：图标来源。顺序即界面顺序（上传 / 文字 / 抓取 / 图标库）。
+ * 一级菜单：图标来源。顺序即界面顺序（图标库 / 抓取 / 上传 / 文字）——
+ * 图标库最通用也最省事，放第一位，同时就是新卡片的默认来源
+ * （见下方 form 的 iconType 初值，两处必须一致）。
  * 选中项直接就是 form.iconType —— 菜单、来源面板、预览共用同一份生效值，
  * 不存在「菜单切了但没生效」的中间态。
  */
 const ICON_SOURCES: Array<{ value: IconType; label: string }> = [
-  { value: 'asset', label: '上传' },
-  { value: 'text', label: '文字' },
-  { value: 'favicon', label: '抓取' },
-  { value: 'iconify', label: '图标库' },
+  { value: 'iconify', label: T.card.iconSource.iconify },
+  { value: 'favicon', label: T.card.iconSource.favicon },
+  { value: 'asset', label: T.card.iconSource.asset },
+  { value: 'text', label: T.card.iconSource.text },
 ]
 
 /**
@@ -249,7 +252,7 @@ const dirty = computed(() => formSnapshot() !== baseline.value)
 const confirmClose = ref(false)
 
 const isEdit = computed(() => props.item !== null)
-const title = computed(() => (isEdit.value ? '编辑卡片' : '新建卡片'))
+const title = computed(() => (isEdit.value ? T.card.titleEdit : T.card.titleNew))
 
 /**
  * ⚠️ 选项值刻意不含 null：Naive UI 的 SelectMixedOption 不接受 `number | null` 的联合类型。
@@ -266,12 +269,12 @@ const UNGROUPED = 0
 const NEW_GROUP = -1
 
 const groupOptions = computed(() => [
-  { label: '未分组', value: UNGROUPED },
+  { label: T.common.ungrouped, value: UNGROUPED },
   ...props.groups.map((g) => ({ label: g.name, value: g.id })),
   // 「新建分组」是一条动作而不是真实分组：不加 + 号，改用强调色区分。
   // style 会落到下拉项元素上（见 naive-ui SelectOption），行内样式不会被
   // hover / pending 等状态样式覆盖，颜色始终是主题强调色。
-  { label: '新建分组', value: NEW_GROUP, style: 'color: var(--accent)' },
+  { label: T.card.newGroupTitle, value: NEW_GROUP, style: 'color: var(--accent)' },
 ])
 
 /**
@@ -342,7 +345,7 @@ async function createGroup(): Promise<boolean> {
     closeGroupDialog()
     return true
   } catch (e) {
-    groupError.value = e instanceof Error ? e.message : '新建分组失败'
+    groupError.value = e instanceof Error ? e.message : T.card.newGroupFailed
     return false
   } finally {
     groupSaving.value = false
@@ -350,9 +353,9 @@ async function createGroup(): Promise<boolean> {
 }
 
 const networkPrefOptions = [
-  { label: '继承全局', value: 'auto' },
-  { label: '强制内网', value: 'lan' },
-  { label: '强制外网', value: 'wan' },
+  { label: T.card.networkAuto, value: 'auto' },
+  { label: T.card.networkLan, value: 'lan' },
+  { label: T.card.networkWan, value: 'wan' },
 ]
 
 /** 打开弹窗时把 item 灌进表单 */
@@ -423,8 +426,8 @@ const urlsEmpty = computed(
 )
 
 const urlWarning = computed(() => {
-  if (!looksLikeUrl(form.value.lanUrl)) return '内网地址看起来不是合法的 http(s) 地址'
-  if (!looksLikeUrl(form.value.wanUrl)) return '外网地址看起来不是合法的 http(s) 地址'
+  if (!looksLikeUrl(form.value.lanUrl)) return T.card.invalidLanUrl
+  if (!looksLikeUrl(form.value.wanUrl)) return T.card.invalidWanUrl
   return null
 })
 
@@ -459,21 +462,21 @@ const previewBoxProps = computed(() => {
     Record<IconType, { fresh: string; again: string; title: string; run: () => void }>
   > = {
     asset: {
-      fresh: '选择图片上传',
-      again: '重新选择图片',
-      title: '支持 PNG / JPEG / GIF / WebP / SVG / ICO，单个 ≤256KB',
+      fresh: T.card.uploadHint.fresh,
+      again: T.card.uploadHint.again,
+      title: T.card.uploadHint.title,
       run: openFilePicker,
     },
     favicon: {
-      fresh: '抓取 favicon',
-      again: '重新抓取 favicon',
+      fresh: T.card.faviconHint.fresh,
+      again: T.card.faviconHint.again,
       title: faviconHint.value,
       run: fetchFavicon,
     },
     iconify: {
-      fresh: '打开图标库',
-      again: '重新选择图标',
-      title: '打开图标库挑选图标',
+      fresh: T.card.iconifyHint.fresh,
+      again: T.card.iconifyHint.again,
+      title: T.card.iconifyHint.title,
       run: openLibrary,
     },
   }
@@ -516,7 +519,7 @@ function toDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.onerror = () => reject(new Error(T.card.readFileFailed))
     reader.readAsDataURL(file)
   })
 }
@@ -529,13 +532,11 @@ async function onFile(event: Event): Promise<void> {
   if (!file) return
 
   if (file.size > MAX_ICON_BYTES) {
-    message.error(
-      `图标不能超过 256KB（当前 ${(file.size / 1024).toFixed(1)}KB）—— 建议改用矢量图标`,
-    )
+    message.error(T.card.iconTooLarge((file.size / 1024).toFixed(1)))
     return
   }
   if (!file.type.startsWith('image/')) {
-    message.error('请选择图片文件')
+    message.error(T.common.chooseImageFile)
     return
   }
 
@@ -545,24 +546,24 @@ async function onFile(event: Event): Promise<void> {
     const asset = await api.assets.upload(file, 'icon')
     form.value.iconType = 'asset'
     form.value.iconValue = asset.url
-    message.success('图标已上传')
+    message.success(T.card.iconUploaded)
   } catch (e) {
     // 接口未实现 / 被拒绝 → 回落 dataURL（完全离线可用，只是会占用 iconValue 空间）
     try {
       const dataUrl = await toDataUrl(file)
       if (dataUrl.length > 4096) {
-        message.error('图片太大，内联存储会超出图标字段长度上限（4096 字符）')
+        message.error(T.card.inlineTooLarge)
         return
       }
       form.value.iconType = 'asset'
       form.value.iconValue = dataUrl
       message.warning(
         e instanceof ApiError && e.status !== 0
-          ? `上传接口不可用（${e.message}），已改为内联存储`
-          : '上传失败，已改为内联存储',
+          ? T.card.uploadUnavailable(e.message)
+          : T.card.uploadFallback,
       )
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '图标读取失败')
+      message.error(err instanceof Error ? err.message : T.card.iconReadFailed)
     }
   } finally {
     uploading.value = false
@@ -590,10 +591,10 @@ const faviconMode = computed<'lan' | 'wan'>(() => {
  */
 const faviconHint = computed(() => {
   const url = faviconMode.value === 'lan' ? lanIconUrl.value : wanIconUrl.value
-  const label = faviconMode.value === 'lan' ? '内网' : '外网'
+  const label = faviconMode.value === 'lan' ? T.common.lan : T.common.wan
   return url
-    ? `从${label}地址抓取 favicon：${url}（右侧可切换内网 / 外网）`
-    : '用卡片的内网 / 外网地址抓取 favicon —— 先在表单里填一个地址'
+    ? T.card.faviconSourceTitle(label, url)
+    : T.card.faviconSourceEmpty
 })
 
 /**
@@ -612,22 +613,24 @@ async function fetchFavicon(): Promise<void> {
   const pick = faviconMode.value
   const url = pick === 'lan' ? lanIconUrl.value : wanIconUrl.value
   if (!lanIconUrl.value && !wanIconUrl.value) {
-    message.warning('请先填写内网地址或外网地址')
+    message.warning(T.card.needAddress)
     return
   }
   if (!url) {
-    message.warning(pick === 'lan' ? '未填写内网地址，换外网试试' : '未填写外网地址，换内网试试')
+    message.warning(pick === 'lan' ? T.card.faviconMissingLan : T.card.faviconMissingWan)
     return
   }
-  const label = pick === 'lan' ? '内网' : '外网'
+  const label = pick === 'lan' ? T.common.lan : T.common.wan
   faviconBusy.value = true
   try {
     const result = await api.favicon.fetch(url)
     setFavicon(result.url)
-    message.success(`已从${label}地址抓取 favicon`)
+    message.success(T.card.faviconFetched(label))
   } catch (e) {
     // 不写占位地址、不动现有图标，只把失败原因说清楚
-    message.error(`${label}地址抓取失败：${e instanceof Error ? e.message : '未知错误'}`)
+    message.error(
+      T.card.faviconFailed(label, e instanceof Error ? e.message : T.common.unknownError),
+    )
   } finally {
     faviconBusy.value = false
   }
@@ -643,11 +646,11 @@ function setFavicon(url: string): void {
 async function submit(): Promise<void> {
   errorText.value = null
   if (form.value.title.trim() === '') {
-    errorText.value = '标题不能为空'
+    errorText.value = T.card.titleRequired
     return
   }
   if (urlsEmpty.value) {
-    errorText.value = '内网地址与外网地址至少填写一个'
+    errorText.value = T.card.addressRequired
     return
   }
   if (urlWarning.value) {
@@ -673,11 +676,11 @@ async function submit(): Promise<void> {
     const saved = props.item
       ? await items.updateItem(props.item.id, body)
       : await items.createItem(body)
-    message.success(props.item ? '卡片已更新' : '卡片已创建')
+    message.success(props.item ? T.card.updated : T.card.created)
     emit('saved', saved)
     emit('update:show', false)
   } catch (e) {
-    errorText.value = e instanceof Error ? e.message : '保存失败'
+    errorText.value = e instanceof Error ? e.message : T.card.saveFailed
   } finally {
     submitting.value = false
   }
@@ -691,12 +694,12 @@ async function confirmDelete(): Promise<void> {
   const ok = await items.removeItem(target.id).then(
     () => true,
     (e: unknown) => {
-      errorText.value = e instanceof Error ? e.message : '删除失败'
+      errorText.value = e instanceof Error ? e.message : T.common.deleteFailed
       return false
     },
   )
   if (!ok) return
-  message.success('卡片已删除')
+  message.success(T.card.deleted)
   emit('deleted', target)
   emit('update:show', false)
 }
@@ -728,29 +731,29 @@ function discardAndClose(): void {
   >
     <NForm label-placement="top" size="small">
       <div class="two-col">
-        <NFormItem label="标题" required>
+        <NFormItem :label="T.card.form.title" required>
           <NInput
             v-model:value="form.title"
-            placeholder="例如：群晖 NAS"
+            :placeholder="T.card.formTitlePlaceholder"
             :maxlength="TITLE_MAX"
             show-count
           />
         </NFormItem>
-        <NFormItem label="副标题">
+        <NFormItem :label="T.card.form.subtitle">
           <NInput
             v-model:value="form.subtitle"
-            placeholder="可选，例如：DS920+ / 4TB"
+            :placeholder="T.card.formSubtitlePlaceholder"
             :maxlength="128"
           />
         </NFormItem>
       </div>
 
       <div class="two-col">
-        <NFormItem label="内网地址">
-          <NInput v-model:value="form.lanUrl" placeholder="192.168.1.5:5000" clearable />
+        <NFormItem :label="T.card.form.lanUrl">
+          <NInput v-model:value="form.lanUrl" :placeholder="T.card.formLanUrlPlaceholder" clearable />
         </NFormItem>
-        <NFormItem label="外网地址">
-          <NInput v-model:value="form.wanUrl" placeholder="https://nas.example.com" clearable />
+        <NFormItem :label="T.card.form.wanUrl">
+          <NInput v-model:value="form.wanUrl" :placeholder="T.card.formWanUrlPlaceholder" clearable />
         </NFormItem>
       </div>
 
@@ -759,14 +762,14 @@ function discardAndClose(): void {
       </NAlert>
 
       <div class="two-col">
-        <NFormItem label="网络偏好">
+        <NFormItem :label="T.card.form.networkPref">
           <NSelect
             v-model:value="form.networkPref"
             :options="networkPrefOptions"
             :consistent-menu-width="false"
           />
         </NFormItem>
-        <NFormItem label="所属分组">
+        <NFormItem :label="T.card.form.group">
           <NSelect
             v-model:value="groupValue"
             :options="groupOptions"
@@ -776,10 +779,10 @@ function discardAndClose(): void {
         </NFormItem>
       </div>
 
-      <NFormItem label="图标">
+      <NFormItem :label="T.card.form.icon">
         <div class="icon-area">
           <!-- 一级菜单：图标来源直接摆在表单上，不再藏进二级浮层 -->
-          <div class="icon-sources" role="group" aria-label="图标来源">
+          <div class="icon-sources" role="group" :aria-label="T.card.iconSourceAria">
             <button
               v-for="source in ICON_SOURCES"
               :key="source.value"
@@ -813,7 +816,7 @@ function discardAndClose(): void {
                   (form.iconType === 'asset' || form.iconType === 'favicon') && form.iconValue
                 "
                 :src="form.iconValue"
-                alt="图标预览"
+                :alt="T.card.iconPreviewAlt"
                 class="preview-img"
               />
               <span
@@ -838,7 +841,7 @@ function discardAndClose(): void {
             <div class="preview-meta">
               <span class="mono dim">{{ form.iconType }}</span>
               <span class="mono dim ellipsis" :title="form.iconValue">
-                {{ form.iconValue || '未设置' }}
+                {{ form.iconValue || T.card.iconNotSet }}
               </span>
             </div>
             <span class="spacer" />
@@ -849,34 +852,34 @@ function discardAndClose(): void {
                 class="source-chip"
                 :class="{ active: faviconMode === 'lan' }"
                 :disabled="!lanIconUrl"
-                :title="lanIconUrl ? `用内网地址抓取：${lanIconUrl}` : '未填写内网地址'"
+                :title="lanIconUrl ? T.card.svgPreviewLan(lanIconUrl) : T.card.addressMissingLan"
                 @click="selectFaviconSource('lan')"
               >
-                内网
+                {{ T.common.lan }}
               </button>
               <button
                 type="button"
                 class="source-chip"
                 :class="{ active: faviconMode === 'wan' }"
                 :disabled="!wanIconUrl"
-                :title="wanIconUrl ? `用外网地址抓取：${wanIconUrl}` : '未填写外网地址'"
+                :title="wanIconUrl ? T.card.svgPreviewWan(wanIconUrl) : T.card.addressMissingWan"
                 @click="selectFaviconSource('wan')"
               >
-                外网
+                {{ T.common.wan }}
               </button>
             </div>
             <!-- 文字来源不另开面板：两个取色器并进这一行，卡片高度不额外增加 -->
             <div v-if="form.iconType === 'text'" class="text-colors">
-              <label class="color-field" title="图标文字颜色">
-                <span class="color-label dim">文字</span>
+              <label class="color-field" :title="T.card.iconColorTextTitle">
+                <span class="color-label dim">{{ T.card.colorText }}</span>
                 <NColorPicker v-model:value="form.iconColor" show-alpha size="small" />
               </label>
-              <label class="color-field" title="图标背景色">
-                <span class="color-label dim">背景</span>
+              <label class="color-field" :title="T.card.iconColorBackgroundTitle">
+                <span class="color-label dim">{{ T.card.colorBackground }}</span>
                 <NColorPicker v-model:value="form.bgColor" show-alpha size="small" />
               </label>
             </div>
-            <NButton size="tiny" quaternary @click="clearIcon">清除</NButton>
+            <NButton size="tiny" quaternary @click="clearIcon">{{ T.card.clear }}</NButton>
           </div>
         </div>
       </NFormItem>
@@ -890,12 +893,12 @@ function discardAndClose(): void {
       <div class="footer">
         <NPopconfirm v-if="isEdit" @positive-click="confirmDelete">
           <template #trigger>
-            <NButton size="small" type="error" quaternary>删除</NButton>
+            <NButton size="small" type="error" quaternary>{{ T.common.delete }}</NButton>
           </template>
-          确定删除「{{ item?.title }}」？
+          {{ T.card.confirmDelete(item?.title ?? '') }}
         </NPopconfirm>
         <span class="spacer" />
-        <NButton size="small" @click="requestClose">取消</NButton>
+        <NButton size="small" @click="requestClose">{{ T.common.cancel }}</NButton>
         <NButton
           size="small"
           type="primary"
@@ -903,7 +906,7 @@ function discardAndClose(): void {
           :disabled="!canSubmit"
           @click="submit"
         >
-          {{ isEdit ? '保存' : '创建' }}
+          {{ isEdit ? T.card.save : T.card.create }}
         </NButton>
       </div>
     </template>
@@ -913,19 +916,18 @@ function discardAndClose(): void {
   <NModal
     v-model:show="libraryOpen"
     preset="card"
-    title="图标库"
+    :title="T.card.iconSource.iconify"
     class="library-modal"
     :style="{ width: '580px', maxWidth: '94vw' }"
   >
     <NInput
       v-model:value="libraryQuery"
-      placeholder="搜索图标名，如 server / video / home"
+      :placeholder="T.card.iconSearchPlaceholder"
       clearable
     />
     <div class="library-body">
       <p v-if="filteredLibrary.length === 0" class="hint dim">
-        没有匹配的内置图标，可在下方直接输入任意图标名 ——
-        未内置的形状会用几何字形兜底。
+        {{ T.card.iconSearchEmpty }}
       </p>
       <div v-for="section in filteredLibrary" :key="section.group" class="lib-section">
         <div class="lib-title dim">{{ section.group }}</div>
@@ -948,9 +950,9 @@ function discardAndClose(): void {
     <!-- 面板里不再放输入框，自定义图标名收进弹层底部 -->
     <template #footer>
       <div class="library-custom">
-        <NInput v-model:value="form.iconValue" placeholder="或直接输入图标名，如 mdi:server" />
+        <NInput v-model:value="form.iconValue" :placeholder="T.card.iconNamePlaceholder" />
         <NButton size="small" type="primary" @click="libraryOpen = false">
-          完成
+          {{ T.card.done }}
         </NButton>
       </div>
     </template>
@@ -960,9 +962,9 @@ function discardAndClose(): void {
   <NModal
     v-model:show="groupDialogOpen"
     preset="dialog"
-    title="新建分组"
-    positive-text="创建"
-    negative-text="取消"
+    :title="T.card.newGroupTitle"
+    :positive-text="T.card.create"
+    :negative-text="T.common.cancel"
     :style="{ width: '360px', maxWidth: '90vw' }"
     :mask-closable="false"
     :positive-button-props="{
@@ -977,7 +979,7 @@ function discardAndClose(): void {
       <NInput
         ref="groupNameInput"
         v-model:value="groupName"
-        placeholder="分组名称，例如：家庭服务"
+        :placeholder="T.card.groupNamePlaceholder"
         :maxlength="48"
         @keydown.enter="createGroup"
       />
@@ -990,10 +992,10 @@ function discardAndClose(): void {
     v-model:show="confirmClose"
     preset="dialog"
     type="warning"
-    title="未保存的修改"
-    content="关闭后将丢失未保存的修改。"
-    positive-text="放弃修改并关闭"
-    negative-text="继续编辑"
+    :title="T.card.unsavedTitle"
+    :content="T.card.unsavedContent"
+    :positive-text="T.card.discardAndClose"
+    :negative-text="T.card.continueEditing"
     :style="{ width: '360px', maxWidth: '90vw' }"
     :positive-button-props="{ type: 'error' }"
     @positive-click="discardAndClose"

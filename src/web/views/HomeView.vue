@@ -4,7 +4,10 @@
  *
  * 版式对齐 Sun-Panel 参考图（docs/reference/sun-panel-ui.webp）：
  *   右上角浮动控制组 → 居中英雄区（标题 + 时钟）→「系统状态」硬件卡片行
- *   →「APP」应用卡片区 → 底部 Powered By。
+ *   →「APP」应用卡片区 → 底部页脚（Powered By + Copyright）。
+ *
+ * 页脚用 flex 撑开（`.home` 纵向 flex + `.content` flex:1 + 页脚 margin-top:auto）：
+ * 内容不足一屏时贴着视口底部，内容超出一屏时跟在卡片后面正常滚动。
  *
  * 没有常驻顶栏、没有监控侧栏：硬件信息就是和 App 卡片并列的一排卡片，
  * 点击后弹出详情（见 components/SystemStatusSection.vue）。
@@ -15,6 +18,7 @@ import { useMessage } from 'naive-ui'
 import { useItemsStore } from '@/stores/items'
 import { useSettingsStore } from '@/stores/settings'
 import { useNetworkStore } from '@/stores/network'
+import { TEXT as T } from '@shared/text'
 import type { Group, Item } from '@shared/types'
 import GroupSection from '@/components/GroupSection.vue'
 import CardEditor from '@/components/CardEditor.vue'
@@ -97,7 +101,7 @@ function onKeydown(event: KeyboardEvent): void {
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'n') {
     event.preventDefault()
     const next = network.toggleMode()
-    message.info(`网络模式：${next === 'lan' ? '内网' : '外网'}`)
+    message.info(T.home.networkModeSwitched(next === 'lan' ? T.common.lan : T.common.wan))
   }
 }
 
@@ -122,7 +126,7 @@ onUnmounted(() => {
 
       <section class="apps">
         <header class="section-head">
-          <h2 class="section-title">APP</h2>
+          <h2 class="section-title">{{ T.home.appsSection }}</h2>
           <SectionEditToggle :active="appEditMode" @toggle="appEditMode = !appEditMode" />
         </header>
 
@@ -146,7 +150,10 @@ onUnmounted(() => {
         </template>
       </section>
 
-      <footer class="powered">Powered By StarM Panel</footer>
+      <footer class="powered">
+        <p class="powered-line">{{ T.home.footerPowered }}</p>
+        <p class="powered-line">{{ T.home.footerCopyright }}</p>
+      </footer>
     </main>
 
     <CardEditor
@@ -162,14 +169,22 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 滚动容器同时是纵向 flex 容器：内容区 flex:1 撑满一屏，
+   页脚再用 margin-top:auto 顶到底部（内容不足时也不悬在半空）。 */
 .home {
   position: relative;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
 }
 
 .content {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  width: 100%;
   max-width: 1180px;
   margin: 0 auto;
   padding: 0 32px 44px;
@@ -234,13 +249,19 @@ onUnmounted(() => {
 }
 
 .powered {
-  margin-top: var(--sp-7);
-  padding: var(--sp-4) 0 var(--sp-2);
+  /* 自动外边距吃掉剩余空间：内容不足一屏时把页脚压到容器底部 */
+  margin-top: auto;
+  padding: var(--sp-7) 0 var(--sp-2);
   text-align: center;
   font-size: 12px;
   letter-spacing: 0.05em;
   color: var(--wp-text-3);
   /* 参考图里这行很淡，但 0.72 在浅色下对比度只有 3.0:1，抬到 0.9 保证可读 */
   opacity: 0.9;
+}
+
+.powered-line {
+  margin: 0;
+  line-height: 1.7;
 }
 </style>

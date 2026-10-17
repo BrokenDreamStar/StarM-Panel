@@ -7,6 +7,7 @@
  * 触屏没有 hover，`hover: none` 下常显，避免无法进入编辑模式。
  */
 import FaviconGlyph from './FaviconGlyph.vue'
+import { TEXT as T } from '@shared/text'
 
 defineProps<{ active: boolean }>()
 
@@ -18,8 +19,8 @@ const emit = defineEmits<{ (e: 'toggle'): void }>()
     class="section-edit"
     type="button"
     :class="{ active }"
-    :title="active ? '完成编辑' : '编辑卡片'"
-    :aria-label="active ? '完成编辑' : '编辑卡片'"
+    :title="active ? T.sectionToggle.done : T.sectionToggle.show"
+    :aria-label="active ? T.sectionToggle.done : T.sectionToggle.show"
     :aria-pressed="active"
     @click="emit('toggle')"
   >

@@ -87,7 +87,9 @@ export const useMonitorStore = defineStore('monitor', () => {
       const snap = await api.system.snapshot()
       pushSnapshot(snap)
     } catch (e) {
-      // 503（首次采样未完成）是正常状态，不记为错误
+      // 503（首次采样未完成）是正常状态，不记为错误。
+      // 这里匹配的是**后端返回的报错原文**，不是界面文案 —— 所以刻意不进
+      // @shared/text：抄一份进文案表反而会变成第三个真相。
       const message = e instanceof Error ? e.message : String(e)
       if (!message.includes('503') && !message.includes('尚未完成首次采样')) {
         error.value = message

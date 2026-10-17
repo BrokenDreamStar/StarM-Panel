@@ -11,6 +11,7 @@ import { db } from '../db'
 import { groups, items } from '../db/schema'
 import { toGroup, toItem } from '../db/mappers'
 import { getAllSettings } from '../services/settings'
+import { gateMode } from '../services/auth'
 import type { BootstrapPayload } from '@shared/types'
 
 const VERSION = '0.1.0'
@@ -29,8 +30,9 @@ export const bootstrapRoutes = new Hono().get('/', (c) => {
     groups: groupRows.map(toGroup),
     items: itemRows.map(toItem),
     settings: getAllSettings(),
-    // 访问口令尚未实现（M5），固定 false
-    authRequired: false,
+    // 门禁是否生效。能走到这里说明已通过认证（或门禁已关闭），
+    // 该字段保留是给前端做「未启用登录保护」的提示用。
+    authRequired: gateMode() !== 'off',
     platform: {
       os: process.platform,
       arch: process.arch,

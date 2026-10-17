@@ -13,6 +13,7 @@
  */
 import { computed } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
+import { TEXT as T } from '@shared/text'
 
 /** 原版的凹边 4 角星，viewBox 100×100 */
 const SPARKLE =
@@ -42,8 +43,13 @@ const settings = useSettingsStore()
 const night = computed(() => settings.isDark)
 
 const title = computed(() => {
-  const current = settings.themeMode === 'system' ? '跟随系统' : night.value ? '深色' : '浅色'
-  return `当前主题：${current}（点击切换浅色 / 深色）`
+  const current =
+    settings.themeMode === 'system'
+      ? T.common.system
+      : night.value
+        ? T.common.dark
+        : T.common.light
+  return T.themeSwitch.current(current)
 })
 
 function toggle(): void {
@@ -59,7 +65,7 @@ function toggle(): void {
     :aria-checked="night"
     :class="{ night }"
     :title="title"
-    aria-label="切换浅色 / 深色主题"
+    :aria-label="T.themeSwitch.toggleAria"
     @click="toggle"
   >
     <span class="sky">

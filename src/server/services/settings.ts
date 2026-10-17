@@ -14,14 +14,13 @@ export const DEFAULT_SETTINGS = {
 
   'theme.mode': 'system',
   'theme.accent': '#6366f1',
-  'wallpaper.type': 'gradient',
+  'wallpaper.type': 'gradient' as 'solid' | 'gradient' | 'asset' | 'bing',
   'wallpaper.value': null as string | null,
 
   'search.defaultEngine': 'bing',
 
   'monitor.interval': 1000,
   'monitor.hiddenInterval': 10_000,
-  'monitor.gpuInterval': 3000,
   /**
    * 首页「系统状态」区展示哪些硬件卡片，数组顺序即展示顺序。
    * 条目为 `{ kind, device? }`（见 docs/DESIGN.md §10.3）：
@@ -43,8 +42,21 @@ export const DEFAULT_SETTINGS = {
    */
   'ui.wallpaperText': 'auto',
 
-  'auth.enabled': false,
+  /**
+   * 登录保护开关。**默认开启**：面板默认就需要管理员登录才能访问，
+   * 关掉等于把面板完全开放给网络（见 docs/DESIGN.md §8.10）。
+   */
+  'auth.enabled': true,
+  /** 管理员口令的 argon2id 哈希（敏感键，不经 API 读出） */
   'auth.passwordHash': null as string | null,
+  /**
+   * 会话世代：改密码 / 「退出所有设备」时自增，
+   * 一次性作废所有已签发令牌（见 services/auth-token.ts）。
+   */
+  'auth.sessionEpoch': 0,
+  /** 上次成功登录的时间与来源 IP（仅供「设置 → 安全」展示） */
+  'auth.lastLoginAt': null as number | null,
+  'auth.lastLoginIp': null as string | null,
 
   'ui.showMonitor': true,
   'ui.cardSize': 'md',
@@ -82,8 +94,36 @@ export const DEFAULT_SETTINGS = {
 
 export type SettingsKey = keyof typeof DEFAULT_SETTINGS
 
-/** 不应通过 API 读出的敏感键 */
-const SECRET_KEYS: ReadonlySet<string> = new Set(['auth.passwordHash'])
+/** 不应通过 API 读出的敏感 / 内部键 */
+const SECRET_KEYS: ReadonlySet<string> = new Set([
+  'auth.passwordHash',
+  'auth.sessionEpoch',
+  'auth.lastLoginAt',
+  'auth.lastLoginIp',
+])
+
+/**
+ * 只能由认证流程（services/auth.ts）写入的键。
+ *
+ * 经 `PATCH /api/settings` 或备份导入覆盖它们等于认证绕过 ——
+ * 攻击者只要能把 `auth.passwordHash` 改成自己算好的哈希，就能直接登录。
+ * 因此写入路径上必须显式拒绝，而不是「反正前端不会这么发」。
+ */
+const AUTH_RESERVED_KEYS: ReadonlySet<string> = new Set([
+  'auth.passwordHash',
+  'auth.sessionEpoch',
+  'auth.lastLoginAt',
+  'auth.lastLoginIp',
+])
+
+export function isReservedSettingKey(key: string): boolean {
+  return AUTH_RESERVED_KEYS.has(key)
+}
+
+/** 挑出补丁里被保留的键（供写入接口报错用） */
+export function reservedSettingKeys(patch: Record<string, unknown>): string[] {
+  return Object.keys(patch).filter(isReservedSettingKey)
+}
 
 function parseValue(raw: string): unknown {
   try {
@@ -108,7 +148,8 @@ export function getAllSettings(): Record<string, unknown> {
   for (const [k, v] of Object.entries(stored)) {
     out[k] = v
   }
-  delete out['auth.passwordHash']
+  // 默认值里也带这些键（类型需要），但一律不对外返回
+  for (const k of SECRET_KEYS) delete out[k]
   return out
 }
 

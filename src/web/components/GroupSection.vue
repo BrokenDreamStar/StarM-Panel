@@ -11,6 +11,7 @@ import { NButton, NDropdown, NInput, type DropdownOption } from 'naive-ui'
 import type { Group, Item } from '@shared/types'
 import { useItemsStore } from '@/stores/items'
 import { useSettingsStore } from '@/stores/settings'
+import { TEXT as T } from '@shared/text'
 import ItemCard from './ItemCard.vue'
 import FaviconGlyph from './FaviconGlyph.vue'
 
@@ -45,14 +46,14 @@ const nameDraft = ref('')
 const nameInput = ref<InstanceType<typeof NInput> | null>(null)
 
 const isUngrouped = computed(() => props.group === null)
-const title = computed(() => props.group?.name ?? '未分组')
+const title = computed(() => props.group?.name ?? T.common.ungrouped)
 const count = computed(() => props.items.length)
 
 const groupMenu: DropdownOption[] = [
-  { label: '重命名', key: 'rename' },
-  { label: '在此分组新建卡片', key: 'create' },
+  { label: T.group.rename, key: 'rename' },
+  { label: T.group.createItem, key: 'create' },
   { type: 'divider', key: 'd' },
-  { label: '删除分组（卡片保留）', key: 'delete' },
+  { label: T.group.delete, key: 'delete' },
 ]
 
 function toggle(): void {
@@ -91,9 +92,7 @@ async function onGroupMenu(key: string): Promise<void> {
       emit('create', props.group.id)
       break
     case 'delete': {
-      const ok = window.confirm(
-        `删除分组「${props.group.name}」？组内 ${count.value} 张卡片会变为未分组，不会被删除。`,
-      )
+      const ok = window.confirm(T.group.deleteConfirm(props.group.name, count.value))
       if (ok) await itemsStore.removeGroup(props.group.id)
       break
     }
@@ -159,7 +158,13 @@ const cardSize = computed(() => settings.cardSize)
         class="group-toggle"
         type="button"
         :disabled="isUngrouped"
-        :title="isUngrouped ? '未分组卡片不可折叠' : collapsed ? '展开' : '折叠'"
+        :title="
+          isUngrouped
+            ? T.group.cannotCollapse
+            : collapsed
+              ? T.group.expand
+              : T.group.collapse
+        "
         @click="toggle"
       >
         <FaviconGlyph
@@ -191,7 +196,7 @@ const cardSize = computed(() => settings.cardSize)
         v-if="editing || count === 0"
         size="tiny"
         quaternary
-        title="新建卡片"
+        :title="T.group.newItem"
         @click="emit('create', group?.id ?? null)"
       >
         <FaviconGlyph name="plus" :size="13" />
@@ -203,7 +208,7 @@ const cardSize = computed(() => settings.cardSize)
         :options="groupMenu"
         @select="onGroupMenu"
       >
-        <NButton size="tiny" quaternary title="分组操作">
+        <NButton size="tiny" quaternary :title="T.group.menuAria">
           <FaviconGlyph name="settings" :size="13" />
         </NButton>
       </NDropdown>
@@ -232,7 +237,7 @@ const cardSize = computed(() => settings.cardSize)
         @click="emit('create', group?.id ?? null)"
       >
         <span class="plus-circle"><FaviconGlyph name="plus" :size="15" /></span>
-        <span>新建卡片</span>
+        <span>{{ T.group.newItem }}</span>
       </button>
     </div>
   </section>

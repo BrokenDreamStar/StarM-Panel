@@ -7,6 +7,8 @@
  *     平台恒为 0。这时显示 0 B/s 会被误读成「磁盘没事干」，必须显示 —。
  */
 
+import { TEXT as T } from '@shared/text'
+
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const
 
 function isNum(v: number | null | undefined): v is number {
@@ -88,9 +90,9 @@ export function fmtUptime(seconds: number | null | undefined): string {
   const d = Math.floor(total / 86400)
   const h = Math.floor((total % 86400) / 3600)
   const m = Math.floor((total % 3600) / 60)
-  if (d > 0) return `${d} 天 ${h} 小时`
-  if (h > 0) return `${h} 小时 ${m} 分`
-  return `${m} 分`
+  if (d > 0) return T.duration.daysHours(d, h)
+  if (h > 0) return T.duration.hoursMinutes(h, m)
+  return T.duration.minutes(m)
 }
 
 /**
@@ -108,10 +110,10 @@ export function fmtUptimeFull(seconds: number | null | undefined): string {
   const m = Math.floor((total % 3600) / 60)
   const s = total % 60
   const parts: string[] = []
-  if (d > 0) parts.push(`${d} 天`)
-  if (d > 0 || h > 0) parts.push(`${h} 小时`)
-  if (d > 0 || h > 0 || m > 0) parts.push(`${m} 分`)
-  parts.push(`${s} 秒`)
+  if (d > 0) parts.push(T.duration.days(d))
+  if (d > 0 || h > 0) parts.push(T.duration.hours(h))
+  if (d > 0 || h > 0 || m > 0) parts.push(T.duration.minutes(m))
+  parts.push(T.duration.seconds(s))
   return parts.join(' ')
 }
 

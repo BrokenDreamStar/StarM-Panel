@@ -1,12 +1,15 @@
 /**
- * 卡片删除 / 移除的确认弹窗（Naive UI Dialog）。
+ * 危险操作的确认弹窗（Naive UI Dialog）。
  *
- * 所有入口共用：APP 卡片的右键菜单 / 编辑模式移除角标 / 卡片编辑器，
- * 以及「系统状态」区硬件卡片的移除角标。
+ * 卡片删除 / 移除的所有入口共用：APP 卡片的右键菜单 / 编辑模式移除角标 /
+ * 卡片编辑器，以及「系统状态」区硬件卡片的移除角标。
+ * 通用的 `confirm()` 也用于设置里退出登录 / 退出所有设备的**二级确认**
+ * （一级是 NPopconfirm 气泡，见 SettingsModal.vue）。
  * 用 Promise 包一层，调用方 `if (!(await confirm(...))) return` 即可。
  * 弹窗视觉沿用全局 Naive UI 主题（App.vue 的 NDialogProvider）。
  */
 import { useDialog } from 'naive-ui'
+import { TEXT as T } from '@shared/text'
 import type { Item } from '@shared/types'
 
 /** 通用确认弹窗参数 */
@@ -39,8 +42,8 @@ export function useDeleteConfirm() {
         // 紧凑尺寸：默认对话框对本项目的一两句话太重，收窄并缩小按钮
         class: 'confirm-dialog',
         style: { width: '340px', maxWidth: '86vw' },
-        positiveText: options.positiveText ?? '删除',
-        negativeText: options.negativeText ?? '取消',
+        positiveText: options.positiveText ?? T.common.delete,
+        negativeText: options.negativeText ?? T.common.cancel,
         positiveButtonProps: { type: 'error', size: 'small' },
         negativeButtonProps: { size: 'small' },
         onPositiveClick: () => settle(true),
@@ -55,9 +58,9 @@ export function useDeleteConfirm() {
   /** APP 卡片删除确认（不可恢复） */
   function confirmRemove(item: Item): Promise<boolean> {
     return confirm({
-      title: '删除卡片',
-      content: `删除后无法恢复，确定删除「${item.title}」？`,
-      positiveText: '删除',
+      title: T.confirm.deleteTitle,
+      content: T.confirm.deleteContent(item.title),
+      positiveText: T.common.delete,
     })
   }
 

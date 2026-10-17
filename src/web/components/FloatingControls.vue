@@ -14,6 +14,7 @@
  */
 import { computed } from 'vue'
 import { useNetworkStore } from '@/stores/network'
+import { TEXT as T } from '@shared/text'
 import FaviconGlyph from './FaviconGlyph.vue'
 import ThemeSwitch from './ThemeSwitch.vue'
 
@@ -26,15 +27,13 @@ const netIcon = computed(() => (network.effectiveMode === 'lan' ? 'home' : 'glob
 const netTitle = computed(() => {
   const lan = network.effectiveMode === 'lan'
   if (network.autoMode) {
-    return `网络模式：自动（当前按${lan ? '内网' : '外网'}解析，点击改为手动切换）`
+    return T.controls.modeAuto(lan ? T.common.lan : T.common.wan)
   }
-  return lan ? '网络模式：内网（点击切换到外网）' : '网络模式：外网（点击切换到内网）'
+  return lan ? T.controls.modeLanManual : T.controls.modeWanManual
 })
 
 const netLabel = computed(() =>
-  network.effectiveMode === 'lan'
-    ? '网络模式：内网，点击切换到外网'
-    : '网络模式：外网，点击切换到内网',
+  network.effectiveMode === 'lan' ? T.controls.modeLanSwitch : T.controls.modeWanSwitch,
 )
 </script>
 
@@ -60,8 +59,8 @@ const netLabel = computed(() =>
       <button
         class="ctl"
         type="button"
-        title="设置"
-        aria-label="打开设置"
+        :title="T.settings.title"
+        :aria-label="T.controls.openSettings"
         @click="emit('open-settings')"
       >
         <FaviconGlyph name="cog" :size="18" />

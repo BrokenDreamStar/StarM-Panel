@@ -23,6 +23,7 @@ import {
   ratioPct,
 } from '@/utils/format'
 import { STAT_CARD_META } from '@/composables/useStatCards'
+import { TEXT as T } from '@shared/text'
 import FaviconGlyph from './FaviconGlyph.vue'
 
 const props = withDefaults(
@@ -131,7 +132,7 @@ const gpuValue = computed(() => {
     }
   }
   // available 为空（macOS / Apple Silicon 的常态）：静态信息就是全部可用信息
-  return gpuStatic.value?.model ?? '静态信息'
+  return gpuStatic.value?.model ?? T.statCard.staticInfo
 })
 
 // ── 卡片文案 ─────────────────────────────────────────────────
@@ -196,7 +197,7 @@ const ratio = computed<number | null>(() => {
     role="button"
     tabindex="0"
     :aria-label="`${meta.title}：${label} ${value}`"
-    :title="`查看${meta.title}详情`"
+    :title="T.statCard.viewDetail(meta.title)"
     @click="emit('open')"
     @keydown.enter="onActivate"
     @keydown.space="onActivate"
@@ -205,8 +206,8 @@ const ratio = computed<number | null>(() => {
       v-if="editing"
       class="stat-remove"
       type="button"
-      :title="removeTitle ?? '移除卡片'"
-      aria-label="移除卡片"
+      :title="removeTitle ?? T.status.removeCard"
+      :aria-label="T.status.removeCard"
       @click.stop="emit('remove')"
     >
       <FaviconGlyph name="close" :size="12" />
