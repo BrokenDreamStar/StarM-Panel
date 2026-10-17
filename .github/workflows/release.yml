@@ -59,17 +59,20 @@ jobs:
       - name: 安装依赖
         run: bun install --frozen-lockfile
 
-      - name: 类型检查
-        run: bun run typecheck
-
-      - name: 单元测试
-        run: bun test
-
+      # 顺序不能反：src/server/generated/assets.ts 用 `with { type: 'file' }`
+      # 直接 import dist/ 下的构建产物，dist 不存在时 api.test.ts 拉起的真实服务器
+      # 启动即崩（本机因为残留 dist 才看不出来，干净克隆的 CI 上必然失败）。
       - name: 构建前端（vite build）
         run: bun run build:web
 
       - name: 生成资源嵌入清单
         run: bun run build:assets
+
+      - name: 类型检查
+        run: bun run typecheck
+
+      - name: 单元测试
+        run: bun test
 
       # 只上传这一个文件：打包时前端产物与迁移 SQL 都经它访问
       - name: 上传资源清单
