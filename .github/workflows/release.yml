@@ -1,4 +1,4 @@
-# 发布构建：dev 分支的 PR 合并进 main 时，产出 6 个单文件可执行程序。
+# 发布构建：dev 分支的 PR 合并进 main 时，产出 6 个单文件可执行程序并发成 Release。
 #
 # 目标（见 docs/DESIGN.md §2.2 ADR-001：全部依赖纯 JS 或 Bun 内置，故可交叉编译）：
 #   macOS   arm64 / x86_64
@@ -8,6 +8,10 @@
 # 触发条件刻意写成「PR 被合并」而不是「push 到 main」：发布只跟着 dev → main 的合并走，
 # 直接往 main 推文档之类的提交不会白跑一次全平台构建。需要在别的分支上手工验证时，
 # 用 workflow_dispatch 选分支手动跑。
+#
+# Release tag 规则：v<package.json 的 version>-<run_number>，例如 v0.1.0-5。
+# 用运行序号而不是干净的 v0.1.0，是因为每次合并都要发一版 —— 版本号不手动抬的话，
+# 第二次合并就会撞上已存在的 tag 而失败。
 name: 构建发布产物
 
 on:
@@ -156,9 +160,61 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  release:
+    name: 发布 Release
+    needs: build
+    runs-on: ubuntu-latest
+    # 全仓库默认只读，只有这一步需要写权限（建 tag / 建 Release）
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+      - name: 读取版本号
+        id: meta
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # merge-multiple：把 6 个 artifact 解到同一目录，压缩包里本来就只有一个文件，
+      # 文件名互不相同，不会互相覆盖
+      - name: 取回全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: starm-panel-*
+          path: release-out
+          merge-multiple: true
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}-${{ github.run_number }}
+          name: StarM Panel v${{ steps.meta.outputs.version }}-${{ github.run_number }}
+          # 显式指定 tag 指向的提交，避免默认落到仓库默认分支的当前 tip
+          target_commitish: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          files: release-out/*
+          fail_on_unmatched_files: true
+          body: |
+            来源提交：`${{ github.event.pull_request.merge_commit_sha || github.sha }}`
+
+            单文件可执行程序，下载后直接运行，无需安装 Bun 或其它依赖。
+
+            | 平台 | 运行环境 | 文件 |
+            | --- | --- | --- |
+            | macOS arm64 | Apple Silicon | `starm-panel-darwin-arm64` |
+            | macOS x86_64 | Intel | `starm-panel-darwin-x64` |
+            | Linux arm64 | ARM64 | `starm-panel-linux-arm64` |
+            | Linux x86_64 | AMD64 | `starm-panel-linux-x64` |
+            | Windows arm64 | ARM64 | `starm-panel-windows-arm64.exe` |
+            | Windows x86_64 | AMD64 | `starm-panel-windows-x64.exe` |
+
+            macOS / Linux 首次运行前需要 `chmod +x`；macOS 从网上直接下载的二进制会被 Gatekeeper
+            拦下，用 `xattr -d com.apple.quarantine <文件>` 放行。
+
   summary:
     name: 汇总产物
-    needs: build
+    needs: [build, release]
     runs-on: ubuntu-latest
     steps:
       - name: 写入构建摘要
@@ -177,5 +233,5 @@ jobs:
             echo "| Windows arm64 | ARM64 | \`starm-panel-windows-arm64.exe\` |"
             echo "| Windows x86_64 | AMD64 | \`starm-panel-windows-x64.exe\` |"
             echo
-            echo "产物在本次运行页面的 Artifacts 区域下载，保留 30 天。"
+            echo "已发布到 Releases：\`v<版本>-<运行序号>\`；本次运行的 Artifacts 也保留 30 天。"
           } >> "$GITHUB_STEP_SUMMARY"
