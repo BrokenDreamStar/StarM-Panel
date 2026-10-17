@@ -3,10 +3,10 @@ node_modules/
 dist/
 release/
 
-# 运行时数据（app.db / secret.key 等）
+# 开发模式的数据目录
 data/
 
-# 工作区内的本地工具链（Bun 二进制）
+# 工作区内的本地工具链
 .tools/
 
 # 编辑器 / 系统
@@ -15,3 +15,7 @@ data/
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# AI
+docs/
+AGENTS.md
