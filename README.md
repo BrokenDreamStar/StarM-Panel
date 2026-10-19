@@ -72,32 +72,6 @@ chmod +x starm-panel-v0.1.2-darwin-arm64
   --help                 显示帮助
 ```
 
-## 后台运行
-
-使用 systemd：
-
-```ini
-# /etc/systemd/system/starm-panel.service
-[Unit]
-Description=StarM Panel
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/starm-panel
-ExecStart=/opt/starm-panel/starm-panel --port 3002 --data-dir /opt/starm-panel/data
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now starm-panel
-```
-
 ## 从源码运行
 
 需要 [Bun](https://bun.sh) ≥ 1.4：
