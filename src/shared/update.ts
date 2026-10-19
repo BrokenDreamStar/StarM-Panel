@@ -206,6 +206,30 @@ export function isPlatformExecutableHeader(bytes: Uint8Array, platform: string):
   }
 }
 
+/** 压缩包扩展名 —— 生成脚本与解析器共用，避免两边各写一遍 `.zst` */
+export const COMPRESSED_ASSET_EXT = '.zst'
+
+/** 安装包对应的压缩包文件名：`starm-panel-v0.1.2-linux-x64` → `…-linux-x64.zst` */
+export function compressedAssetName(assetName: string): string {
+  return `${assetName}${COMPRESSED_ASSET_EXT}`
+}
+
+/**
+ * `latest.json` 里同一安装包的 zstd 压缩包。
+ *
+ * 单文件产物里运行时占 98%，六平台产物 60–84MB，而 zstd 能压到三成左右。
+ * 压缩包只用于**传输**：更新器解压后仍按未压缩产物的 `size` / `sha256` 校验，
+ * 再写盘替换，所以启用压缩不降低校验强度，也不改变安装后的文件体积。
+ */
+export interface UpdateManifestZstd {
+  /** 压缩包文件名，固定为 `<安装包名>.zst` */
+  name: string
+  /** 压缩包字节数 */
+  size: number
+  /** 压缩包的 sha256（hex） */
+  sha256: string
+}
+
 /**
  * `latest.json` 更新清单的单个安装包条目。
  *
@@ -217,6 +241,11 @@ export interface UpdateManifestAsset {
   name: string
   size: number
   sha256: string
+  /**
+   * 同一产物的 zstd 压缩包，供支持解压的客户端省下载流量。
+   * 旧版发布没有这个字段，网页回退路径也拿不到，更新器届时直接下载原始产物。
+   */
+  zstd: UpdateManifestZstd | null
 }
 
 /** `latest.json` 更新清单（schema = 1） */
@@ -234,6 +263,26 @@ export interface UpdateManifest {
 const SHA256_RE = /^[0-9a-f]{64}$/i
 /** 资产名只允许文件名字符：它会被拼进下载 URL，不接受路径分隔符 */
 const ASSET_NAME_RE = /^[A-Za-z0-9._-]+$/
+
+/**
+ * 解析条目里可选的 `zstd` 字段。
+ *
+ * 返回 `null` = 没有压缩包（旧版发布，正常情况）；返回 `false` = 字段存在但不合法
+ * （清单有问题）。两者必须分开：只有后者才把整份清单判坏。
+ */
+function parseZstdAsset(raw: unknown, assetName: string): UpdateManifestZstd | null | false {
+  if (raw === undefined || raw === null) return null
+  if (typeof raw !== 'object') return false
+  const o = raw as Record<string, unknown>
+  const name = typeof o.name === 'string' ? o.name.trim() : ''
+  const size = typeof o.size === 'number' && Number.isFinite(o.size) && o.size > 0 ? o.size : null
+  const sha256 = typeof o.sha256 === 'string' ? o.sha256.trim() : ''
+  if (size === null || !SHA256_RE.test(sha256)) return false
+  // 压缩包必须就是同一条目的安装包加 `.zst`：两个文件各指一处的话，
+  // 「解压后按未压缩产物的 sha256 校验」这道闸门就失去意义了
+  if (!ASSET_NAME_RE.test(name) || name !== compressedAssetName(assetName)) return false
+  return { name, size, sha256: sha256.toLowerCase() }
+}
 
 /**
  * 校验并解析 `latest.json`。
@@ -269,9 +318,17 @@ export function parseUpdateManifest(raw: unknown): UpdateManifest | null {
     // 未知平台直接忽略：以后发布矩阵增加平台时，旧客户端不该整份清单判坏
     if (!UPDATE_PLATFORMS.includes(platform as UpdatePlatform)) continue
     if (!ASSET_NAME_RE.test(name) || size === null || !SHA256_RE.test(sha256)) return null
+    const zstd = parseZstdAsset(a.zstd, name)
+    if (zstd === false) return null
     // 同一平台出现两次说明清单生成有 bug，直接判坏
     if (assets.some((x) => x.platform === platform)) return null
-    assets.push({ platform: platform as UpdatePlatform, name, size, sha256: sha256.toLowerCase() })
+    assets.push({
+      platform: platform as UpdatePlatform,
+      name,
+      size,
+      sha256: sha256.toLowerCase(),
+      zstd,
+    })
   }
 
   // 全部条目都是未知平台时等同于坏清单

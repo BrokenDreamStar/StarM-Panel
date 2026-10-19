@@ -9,6 +9,11 @@
  * 流程：检查（latest.json，缺失时回退网页）→ 下载到同目录临时文件 → 校验大小 / sha256 →
  * 备份旧文件、改名替换 → 交给 services/restart 拉起新进程。
  *
+ * 下载体积：清单里带 `zstd` 条目时优先下载压缩包（60–84MB → 19–29MB），
+ * 解压后再按**未压缩产物**的 size / sha256 校验，校验强度与下载原始产物完全一致；
+ * 压缩包缺失、镜像不转发或解压失败时自动退回原始产物。压缩只省下载流量，
+ * 装上去的文件体积不变。
+ *
  * 平台差异：Windows 不能覆盖正在运行的 exe，但**可以改名**，所以
  * 「旧文件改成 .old、新文件改成原名」这条路径两个平台通用。
  * 替换成功后 .old 会保留到下一次成功启动 —— 新版本起不来时它就是回滚点。
@@ -24,6 +29,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -56,15 +62,26 @@ const PROBE_TIMEOUT_MS = 10_000
 /** 检查结果缓存时长：避免反复点「检查更新」时重复下载清单 / 探测资产 */
 const CACHE_TTL_MS = 60_000
 
+/** 同一安装包的 zstd 压缩包 */
+interface CompressedAsset {
+  name: string
+  size: number | null
+  url: string
+  /** 压缩包的 sha256（hex） */
+  digest: string
+}
+
 /** 从 Release 里挑出来的安装包 */
 interface DownloadAsset {
   name: string
   size: number | null
   url: string
-  /** `sha256:<hex>`，清单路径才有；网页备用路径为 null */
+  /** 未压缩产物的 sha256（hex），清单路径才有；网页备用路径为 null */
   digest: string | null
   /** 可信来源 origin：下载时据此核对最终跳转地址 */
   origin: string
+  /** 可选的压缩包：有就优先下载它，省下载流量 */
+  compressed: CompressedAsset | null
 }
 
 interface LatestRelease {
@@ -98,6 +115,19 @@ class ManifestUnavailableError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'ManifestUnavailableError'
+  }
+}
+
+/**
+ * 下载地址不在白名单内。
+ *
+ * 这是信任边界问题，不能靠「换另一条下载路径」绕过，因此压缩包失败回退时
+ * 要把它单独放行出来（见 runUpdate）。
+ */
+class UntrustedAssetError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UntrustedAssetError'
   }
 }
 
@@ -255,13 +285,22 @@ async function fetchLatestReleaseViaManifest(
   let asset: DownloadAsset | null = null
   if (entry) {
     // 固定到清单里的 tag，而不是 /latest/：检查与下载之间再发版也不会串版本
-    const url = `${cfg.base}/${cfg.repo}/releases/download/${encodeURIComponent(manifest.tag)}/${encodeURIComponent(entry.name)}`
+    const releaseUrl = (assetName: string): string =>
+      `${cfg.base}/${cfg.repo}/releases/download/${encodeURIComponent(manifest.tag)}/${encodeURIComponent(assetName)}`
     asset = {
       name: entry.name,
       size: entry.size,
-      url: resolveDownloadUrl(url, cfg.mirror),
-      digest: `sha256:${entry.sha256}`,
+      url: resolveDownloadUrl(releaseUrl(entry.name), cfg.mirror),
+      digest: entry.sha256,
       origin: cfg.base,
+      compressed: entry.zstd
+        ? {
+            name: entry.zstd.name,
+            size: entry.zstd.size,
+            url: resolveDownloadUrl(releaseUrl(entry.zstd.name), cfg.mirror),
+            digest: entry.zstd.sha256,
+          }
+        : null,
     }
   }
 
@@ -273,7 +312,8 @@ async function fetchLatestReleaseViaManifest(
       publishedAt: manifest.publishedAt,
       htmlUrl: `${cfg.base}/${cfg.repo}/releases/tag/${encodeURIComponent(manifest.tag)}`,
       assetName: asset?.name ?? null,
-      assetSize: asset?.size ?? null,
+      // 展示 / 初始化进度条都用「这次要下载多少」：有压缩包就是压缩包大小
+      assetSize: asset ? (asset.compressed?.size ?? asset.size) : null,
     },
     asset,
   }
@@ -329,9 +369,11 @@ async function fetchLatestReleaseViaWeb(
         name,
         size: probe.size,
         url: resolveDownloadUrl(url, cfg.mirror),
-        // 网页方式拿不到官方 digest，由 runUpdate 用大小 + 可执行文件头兜底
+        // 网页方式拿不到官方 digest，由 runUpdate 用大小 + 可执行文件头兜底；
+        // 同理也拿不到压缩包信息，只能下原始产物
         digest: null,
         origin: cfg.base,
+        compressed: null,
       }
       break
     } catch (err) {
@@ -517,7 +559,7 @@ export async function startUpdate(tag: string): Promise<{ tag: string }> {
     phase: 'downloading',
     tag,
     received: 0,
-    total: asset.size,
+    total: asset.compressed?.size ?? asset.size,
     error: null,
     startedAt: Date.now(),
   }
@@ -525,6 +567,159 @@ export async function startUpdate(tag: string): Promise<{ tag: string }> {
   // 不 await：接口要尽快回包，进度走 status 轮询
   void runUpdate(tag, asset)
   return { tag }
+}
+
+/**
+ * 下载完整性校验：清单里给了哪个字段就核哪个。
+ *
+ * 网页备用路径没有 digest（传 null），只靠大小 + 可执行文件头兜底。
+ */
+function verifyDownload(
+  label: string,
+  expectedSize: number | null,
+  expectedDigest: string | null,
+  actualSize: number,
+  actualSha256: string,
+): void {
+  if (expectedSize !== null && actualSize !== expectedSize) {
+    throw new Error(`${label}不完整：应为 ${expectedSize} 字节，实际 ${actualSize} 字节`)
+  }
+  if (expectedDigest && actualSha256.toLowerCase() !== expectedDigest.toLowerCase()) {
+    throw new Error(`${label}校验失败（sha256 不匹配），已放弃替换`)
+  }
+}
+
+/**
+ * 打开安装包下载流，并核一次最终跳转地址是否可信。
+ *
+ * 镜像地址由部署者显式配置，跳转不做域名限制；直连路径必须落在 GitHub 域名内
+ * （重定向可能落到别的域名）。
+ */
+async function openDownload(
+  url: string,
+  origin: string,
+  mirror: string,
+): Promise<{ res: Response; body: ReadableStream<Uint8Array> }> {
+  let res: Response
+  try {
+    res = await fetch(url, {
+      redirect: 'follow',
+      headers: { 'user-agent': `starm-panel/${APP_VERSION}` },
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    })
+  } catch (err) {
+    throw new Error(`下载失败：${errorMessage(err)}`)
+  }
+  if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`)
+  if (!res.body) throw new Error('下载失败：响应为空')
+  if (!mirror && !isTrustedAssetUrl(res.url || url, origin)) {
+    throw new UntrustedAssetError('下载地址不在允许的域名内，已中止')
+  }
+  return { res, body: res.body }
+}
+
+/**
+ * 下载未压缩安装包，边下边写盘。
+ *
+ * 60–84MB 的产物不整块读进内存；只有走压缩包路径时才需要缓冲区
+ * （见 downloadCompressedTo）。
+ */
+async function downloadRawTo(asset: DownloadAsset, tmp: string, mirror: string): Promise<void> {
+  setState({ phase: 'downloading', received: 0, total: asset.size })
+  const { res, body } = await openDownload(asset.url, asset.origin, mirror)
+
+  const contentLength = Number(res.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > 0) setState({ total: contentLength })
+
+  const hasher = new Bun.CryptoHasher('sha256')
+  // 用同步 fd 写：writeSync 保证每次把整块写进文件（FileSink 的缓冲语义
+  // 取决于运行时实现），更新这种一次性操作不值得为异步 IO 冒截断的风险。
+  const fd = openSync(tmp, 'w')
+  let received = 0
+  try {
+    const reader = body.getReader()
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      hasher.update(value)
+      let offset = 0
+      while (offset < value.byteLength) {
+        offset += writeSync(fd, value, offset, value.byteLength - offset)
+      }
+      setState({ received })
+    }
+  } finally {
+    closeSync(fd)
+  }
+  setState({ received })
+
+  setState({ phase: 'verifying' })
+  verifyDownload('安装包', asset.size, asset.digest, received, hasher.digest('hex'))
+}
+
+/**
+ * 下载 zstd 压缩包、解压后写入临时文件。
+ *
+ * 压缩包只有 20–30MB，整块读进内存再解压（解压后 60–84MB，峰值约 140MB）
+ * 比「压缩包落盘再读回来解压」少一次 30MB 的写盘 + 读盘，实现也更简单；
+ * 更新是一次性操作，这点内存换掉一次磁盘往返是划算的。
+ *
+ * 校验顺序：压缩包自己的 size / sha256 → 解压 → 未压缩产物的 size / sha256。
+ */
+async function downloadCompressedTo(asset: DownloadAsset, tmp: string, mirror: string): Promise<void> {
+  const compressed = asset.compressed
+  if (!compressed) throw new Error('没有可用的压缩包')
+
+  setState({ phase: 'downloading', received: 0, total: compressed.size })
+  const { res, body } = await openDownload(compressed.url, asset.origin, mirror)
+
+  const contentLength = Number(res.headers.get('content-length'))
+  if (Number.isFinite(contentLength) && contentLength > 0) setState({ total: contentLength })
+
+  const hasher = new Bun.CryptoHasher('sha256')
+  const chunks: Uint8Array[] = []
+  let received = 0
+  const reader = body.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    received += value.byteLength
+    hasher.update(value)
+    setState({ received })
+  }
+
+  setState({ phase: 'verifying' })
+  verifyDownload('压缩包', compressed.size, compressed.digest, received, hasher.digest('hex'))
+
+  const packed = Buffer.concat(chunks)
+  chunks.length = 0
+  const raw = decompressZstdPackage(packed)
+  packed.fill(0)
+  verifyDownload(
+    '安装包',
+    asset.size,
+    asset.digest,
+    raw.byteLength,
+    new Bun.CryptoHasher('sha256').update(raw).digest('hex'),
+  )
+  writeFileSync(tmp, raw)
+}
+
+/**
+ * 解压 zstd 安装包（纯函数，便于单测）。
+ *
+ * 解压失败一律抛错：宁可让用户重新下载，也不要把半个文件装上去。
+ */
+export function decompressZstdPackage(payload: Uint8Array): Uint8Array {
+  // 空响应（有些代理会用 200 + 0 字节顶替失败）不该被当成合法压缩包
+  if (payload.byteLength === 0) throw new Error('安装包解压失败（zstd）：内容是空的')
+  try {
+    return Bun.zstdDecompressSync(payload)
+  } catch (err) {
+    throw new Error(`安装包解压失败（zstd）：${errorMessage(err)}`)
+  }
 }
 
 async function runUpdate(tag: string, asset: DownloadAsset): Promise<void> {
@@ -535,59 +730,20 @@ async function runUpdate(tag: string, asset: DownloadAsset): Promise<void> {
   const { update } = getConfig()
 
   try {
-    let res: Response
-    try {
-      res = await fetch(asset.url, {
-        redirect: 'follow',
-        headers: { 'user-agent': `starm-panel/${APP_VERSION}` },
-        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-      })
-    } catch (err) {
-      throw new Error(`下载失败：${errorMessage(err)}`)
-    }
-    if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`)
-    if (!res.body) throw new Error('下载失败：响应为空')
-    // 镜像之外的直连路径再核一次最终地址（重定向可能落到别的域名）
-    if (!update.mirror && !isTrustedAssetUrl(res.url || asset.url, asset.origin)) {
-      throw new Error('下载地址不在允许的域名内，已中止')
-    }
-
-    const contentLength = Number(res.headers.get('content-length'))
-    if (Number.isFinite(contentLength) && contentLength > 0) setState({ total: contentLength })
-
-    const hasher = new Bun.CryptoHasher('sha256')
-    // 用同步 fd 写：writeSync 保证每次把整块写进文件（FileSink 的缓冲语义
-    // 取决于运行时实现），更新这种一次性操作不值得为异步 IO 冒截断的风险。
-    const fd = openSync(tmp, 'w')
-    let received = 0
-    try {
-      const reader = res.body.getReader()
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        received += value.byteLength
-        hasher.update(value)
-        let offset = 0
-        while (offset < value.byteLength) {
-          offset += writeSync(fd, value, offset, value.byteLength - offset)
-        }
-        setState({ received })
+    if (asset.compressed) {
+      try {
+        await downloadCompressedTo(asset, tmp, update.mirror)
+      } catch (err) {
+        // 压缩包没上传 / 镜像不转发 / 解压失败时退回未压缩产物：两条路径各自
+        // 独立校验（各自的 size 与 sha256），退回不降低安全性，只是多下一些流量。
+        // 但「地址不可信」是信任边界问题，不能靠换条路径绕过。
+        if (err instanceof UntrustedAssetError) throw err
+        console.warn(`[update] 压缩包不可用，改用未压缩安装包：${errorMessage(err)}`)
+        removeQuietly(tmp)
+        await downloadRawTo(asset, tmp, update.mirror)
       }
-    } finally {
-      closeSync(fd)
-    }
-    setState({ received })
-
-    setState({ phase: 'verifying' })
-    if (asset.size !== null && received !== asset.size) {
-      throw new Error(`下载不完整：应为 ${asset.size} 字节，实际 ${received} 字节`)
-    }
-    const expected = asset.digest?.toLowerCase().startsWith('sha256:')
-      ? asset.digest.slice('sha256:'.length).toLowerCase()
-      : null
-    if (expected) {
-      const actual = hasher.digest('hex')
-      if (actual !== expected) throw new Error('安装包校验失败（sha256 不匹配），已放弃替换')
+    } else {
+      await downloadRawTo(asset, tmp, update.mirror)
     }
 
     // 网页备用路径没有 digest，用文件头再确认一次「确实是当前平台的可执行程序」：
