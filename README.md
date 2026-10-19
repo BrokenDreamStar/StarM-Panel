@@ -108,6 +108,10 @@ bun run dev
 bun run build
 ```
 
+## 更新日志
+
+见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 许可证
 
 [GPL-3.0](LICENSE)
