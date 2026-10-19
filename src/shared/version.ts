@@ -13,11 +13,11 @@ import { version } from '../../package.json'
 export const APP_VERSION: string = version
 
 /**
- * 构建期注入的发布标识（GitHub Release 的 tag，如 `v0.1.0-5`）。
+ * 构建期注入的发布标识（GitHub Release 的 tag，如 `v0.1.1` / `v0.1.1-2`）。
  *
- * 「有没有新版本」不能只看 package.json：发布 tag 是
- * `v<version>-<运行序号>`（见 .github/workflows/release.yml），
- * 同一个版本号可以发很多次，必须带上运行序号才比得出来。
+ * 「有没有新版本」不能只看 package.json：版本首发 tag 是 `v<version>`，
+ * 同一版本重复发布则是 `v<version>-<序号>`（见 .github/workflows/release.yml），
+ * 必须带上序号才比得出来是不是又一次发布。
  * scripts/build.ts 用 `bun build --define` 把 tag 直接写进产物；
  * 开发模式 / 前端构建没有这个常量，`typeof` 判断后回落 null。
  */

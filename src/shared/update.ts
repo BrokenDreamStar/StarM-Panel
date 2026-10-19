@@ -14,8 +14,8 @@ export interface ReleaseVersion {
   /** 语义版本三段（`0.1.0`） */
   version: string
   /**
-   * 发布运行序号。Release tag 形如 `v<version>-<run_number>`，
-   * 版本号没变时靠它区分「同版本的又一次发布」；不带序号时为 null。
+   * 同版本内的重复发布序号。首次发布不带序号（`v0.1.1`），
+   * 之后同版本再发才追加（`v0.1.1-2`、`v0.1.1-3`…）；不带序号时为 null。
    */
   build: number | null
 }
@@ -23,7 +23,9 @@ export interface ReleaseVersion {
 /**
  * 解析发布 tag。
  *
- * 只接受本项目 release 工作流产出的两种形态：`v0.1.0` 与 `v0.1.0-5`。
+ * 只接受本项目 release 工作流产出的两种形态：
+ *   - 版本首发：`v0.1.0`
+ *   - 同版本重复发布：`v0.1.0-5`（序号从 2 开始）
  * 不符合格式（预发布版、手写 tag）返回 null —— 调用方据此拒绝「更新」，
  * 而不是猜一个语义去比大小。
  */
@@ -56,15 +58,47 @@ export function compareVersions(a: string, b: string): number {
 /**
  * latest 是否比 current 新。
  *
- * 先比版本号；版本号相同再比发布序号（`v0.1.0-6` 比 `v0.1.0-5` 新）。
- * 任意一侧没有序号时只认版本号大小 —— 手写构建 / 开发模式没有发布序号，
- * 不能因此把「同版本的另一份构建」判定成更新，否则会陷入反复更新。
+ * 先比版本号；版本号相同再比「同版本重复发布序号」。
+ * 不带序号的是该版本的首发，按 0 计 —— 因此 `v0.1.1` 之后发布的
+ * `v0.1.1-2` 会被识别为更新；反过来，已经装了 `v0.1.1-2` 不会被首发版「更新」回去。
+ * 手写构建 / 开发模式没有发布 tag，同样按 0 计：它们会被提示更新到同版本的正式发布，
+ * 而更新之后产物里带上了 tag，就不会再反复提示。
  */
 export function isNewerRelease(latest: ReleaseVersion, current: ReleaseVersion): boolean {
   const cmp = compareVersions(latest.version, current.version)
   if (cmp !== 0) return cmp > 0
-  if (latest.build === null || current.build === null) return false
-  return latest.build > current.build
+  return (latest.build ?? 0) > (current.build ?? 0)
+}
+
+/**
+ * 计算本次发布应当使用的 tag。
+ *
+ * 规则：**每个版本的第一次发布不带序号**（`v0.1.1`），同一版本重复发布才追加
+ * （`v0.1.1-2`、`v0.1.1-3`…）。判断依据是仓库里已有的 tag：
+ * 没有该版本的 tag → 首发；已有（无论带不带序号）→ 取最大序号 + 1。
+ * 不带序号的那次视为 1，所以首发之后的第一次重复发布是 `-2`。
+ *
+ * 历史 tag `v<version>-<run_number>` 同样按数字序号参与计算，换规则不会把序号用重。
+ * 版本号非法（不是三段式）返回 null。
+ */
+export function nextReleaseTag(version: string, existingTags: readonly string[]): string | null {
+  const raw = version.trim().replace(/^v/i, '')
+  const parsedVersion = parseReleaseTag(`v${raw}`)
+  if (!parsedVersion || parsedVersion.build !== null) return null
+  const target = parsedVersion.version
+
+  let seen = false
+  let maxBuild = 0
+  for (const existing of existingTags) {
+    const parsed = parseReleaseTag(existing)
+    if (!parsed || parsed.version !== target) continue
+    seen = true
+    // 首发（不带序号）按 1 计，重复发布的序号从它之后接着排
+    maxBuild = Math.max(maxBuild, parsed.build ?? 1)
+  }
+
+  if (!seen) return `v${target}`
+  return `v${target}-${Math.max(maxBuild, 1) + 1}`
 }
 
 /**

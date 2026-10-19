@@ -13,6 +13,7 @@ import {
   isNewerRelease,
   isLoopbackHost,
   isPlatformExecutableHeader,
+  nextReleaseTag,
   parseReleaseTag,
   parseUpdateManifest,
   platformFromAssetName,
@@ -67,15 +68,52 @@ describe('isNewerRelease', () => {
     expect(isNewerRelease({ tag: 'v0.0.9-99', version: '0.0.9', build: 99 }, current)).toBe(false)
   })
 
-  test('缺发布序号时只认版本号（避免同版本反复提示更新）', () => {
-    expect(isNewerRelease({ tag: 'v0.1.0', version: '0.1.0', build: null }, current)).toBe(false)
+  test('首发不带序号，同版本的重复发布算更新', () => {
+    const first = { tag: 'v0.1.1', version: '0.1.1', build: null }
+    expect(isNewerRelease({ tag: 'v0.1.1-2', version: '0.1.1', build: 2 }, first)).toBe(true)
+    expect(isNewerRelease({ tag: 'v0.1.1', version: '0.1.1', build: null }, first)).toBe(false)
+    // 已经装了重复发布，不会被同版本的首发「更新」回去
     expect(
-      isNewerRelease({ tag: 'v0.1.0-6', version: '0.1.0', build: 6 }, {
-        tag: 'v0.1.0',
-        version: '0.1.0',
-        build: null,
-      }),
+      isNewerRelease(first, { tag: 'v0.1.1-2', version: '0.1.1', build: 2 }),
     ).toBe(false)
+    // 旧版本（带序号）遇到新版本的首发，仍按版本号判断
+    expect(isNewerRelease({ tag: 'v0.1.0', version: '0.1.0', build: null }, current)).toBe(false)
+  })
+})
+
+describe('nextReleaseTag', () => {
+  test('没发过该版本 → 首发不带序号', () => {
+    expect(nextReleaseTag('0.1.1', [])).toBe('v0.1.1')
+    expect(nextReleaseTag('0.1.1', ['v0.1.0', 'v0.1.0-5'])).toBe('v0.1.1')
+  })
+
+  test('已有首发 → 第一次重复发布是 -2', () => {
+    expect(nextReleaseTag('0.1.1', ['v0.1.1'])).toBe('v0.1.1-2')
+  })
+
+  test('已有首发与 -2 → 继续排到 -3', () => {
+    expect(nextReleaseTag('0.1.1', ['v0.1.1', 'v0.1.1-2'])).toBe('v0.1.1-3')
+  })
+
+  test('旧规则留下的运行序号继续往后排', () => {
+    expect(nextReleaseTag('0.1.1', ['v0.1.1-6'])).toBe('v0.1.1-7')
+    expect(nextReleaseTag('0.1.1', ['v0.1.1', 'v0.1.1-6'])).toBe('v0.1.1-7')
+  })
+
+  test('无关版本、预发布与手写 tag 不影响计数', () => {
+    const tags = ['v0.1.10', 'v0.1.1-beta.1', 'v0.2.0', 'release-0.1.1', 'v0.1.1-']
+    expect(nextReleaseTag('0.1.1', tags)).toBe('v0.1.1')
+  })
+
+  test('合法但带 v 前缀的入参也能算出同样的 tag', () => {
+    expect(nextReleaseTag('v0.1.1', ['v0.1.1-2'])).toBe('v0.1.1-3')
+  })
+
+  test('非法版本号返回 null', () => {
+    expect(nextReleaseTag('0.1', [])).toBeNull()
+    expect(nextReleaseTag('latest', [])).toBeNull()
+    expect(nextReleaseTag('', [])).toBeNull()
+    expect(nextReleaseTag('0.1.1-2', [])).toBeNull()
   })
 })
 

@@ -136,7 +136,7 @@ export interface UpdateReleaseInfo {
 export interface UpdateCheckResult {
   current: {
     version: string
-    /** 构建期注入的 Release tag；开发模式 / 手写构建为 null */
+    /** 构建期注入的 Release tag（如 v0.1.1 / v0.1.1-2）；开发模式 / 手写构建为 null */
     release: string | null
     /** 形如 `linux-x64`，与 Release 资产后缀一致 */
     platform: string

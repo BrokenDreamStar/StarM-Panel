@@ -3,9 +3,10 @@
  *
  * 在 release 工作流里、六个平台产物全部取回之后运行：
  *
- *   bun run scripts/gen-update-manifest.ts release-out v0.1.0-6
+ *   bun run scripts/gen-update-manifest.ts release-out v0.1.1
  *
- * 清单被上传为 Release 资产，更新器通过官方稳定地址
+ * tag 是发布工作流 prepare 阶段算出来的：首发 `v0.1.1`，
+ * 同版本重复发布 `v0.1.1-2`。清单被上传为 Release 资产，更新器通过官方稳定地址
  * `https://github.com/<repo>/releases/latest/download/latest.json` 读取它：
  * 一次请求就能拿到 tag、版本、各平台资产名、大小与 sha256，
  * 不占 GitHub API 配额、不需要 token，也不需要猜资产命名。
@@ -41,7 +42,7 @@ if (!dirArg || !tag) {
 
 const parsed = parseReleaseTag(tag)
 if (!parsed || !tag.startsWith('v')) {
-  fail(`发布 tag 非法：${tag}（应形如 v0.1.0-6，与 Release tag 一致）`)
+  fail(`发布 tag 非法：${tag}（应形如 v0.1.1 或 v0.1.1-2，与 Release tag 一致）`)
 }
 
 const dir = resolve(dirArg)

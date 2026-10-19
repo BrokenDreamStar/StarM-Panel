@@ -3,7 +3,7 @@
  *
  * 背景（见 docs/DESIGN.md ADR-008）：
  *   - 面板是单文件产物、没有进程守护，自己的更新只能「自己替换自己再重启」；
- *   - 发布 tag 是 `v<version>-<运行序号>`，同一个版本号可能发多次，
+ *   - 发布 tag 首发为 `v<version>`，同一版本重复发布才带序号（`v<version>-2`…），
  *     因此「当前版本」以构建期注入的 RELEASE_TAG 为准（见 src/shared/version.ts）。
  *
  * 流程：检查（latest.json，缺失时回退网页）→ 下载到同目录临时文件 → 校验大小 / sha256 →
@@ -313,7 +313,7 @@ async function fetchLatestReleaseViaWeb(
   const tag = tagFromReleaseLocation(location, cfg.base)
   if (!tag) throw new Error('无法从 GitHub 网页解析最新版本号')
   const parsed = parseReleaseTag(tag)
-  if (!parsed) throw new Error(`无法识别的发布 tag：${tag}（应形如 v0.1.0-1）`)
+  if (!parsed) throw new Error(`无法识别的发布 tag：${tag}（应形如 v0.1.1 或 v0.1.1-2）`)
 
   const suffix = platformSuffix(process.platform, process.arch)
   if (!suffix) throw new Error(`当前平台（${process.platform}-${process.arch}）没有对应的发布包`)
