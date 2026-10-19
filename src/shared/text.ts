@@ -729,6 +729,43 @@ export const TEXT = {
 		restarted: '面板已重启',
 		restartTimeout: '重启超时：请检查面板进程是否已启动',
 
+		/**
+		 * 软件更新（从 GitHub Releases 拉取）。
+		 *
+		 * 「当前 / 最新版本」的取值、进度百分比都由组件算好后传进来，
+		 * 这里只负责措辞；服务端返回的原始错误信息由调用方拼进这些模板。
+		 */
+		update: {
+			title: '软件更新',
+			/** 「关于」规格表里新增的一行 */
+			kvLatest: '最新版本',
+			check: '检查更新',
+			apply: '立即更新',
+			releaseNotes: '发布说明',
+			/** 还没检查过 / 检查被跳过 */
+			unknown: '尚未检查',
+			upToDate: (tag: string | null) => (tag ? `已是最新版本 ${tag}` : '已是最新版本'),
+			available: (tag: string) => `发现新版本 ${tag}`,
+			/** 开发模式（bun run dev）下没有可替换的单文件产物 */
+			devMode: '开发模式下无法自动更新，请更新源码后重启面板',
+			confirm: (tag: string) => `将下载 ${tag} 并替换当前程序，面板会重启一次。确定继续？`,
+			/** 更新过程的阶段文案；下载百分比未知时只显示「正在下载」 */
+			phase: {
+				downloading: (percent: number | null) =>
+					percent === null ? '正在下载安装包…' : `正在下载安装包 ${percent}%`,
+				verifying: '正在校验安装包…',
+				installing: '正在替换程序文件…',
+				restarting: '更新完成，正在重启面板…',
+			},
+			/** 下载量：已下载 / 总量（单位由 utils/format 统一换算） */
+			progress: (received: string, total: string) => `${received} / ${total}`,
+			checkFailed: (message: string) => `检查更新失败：${message}`,
+			/** 走了网页备用路径：说明为什么校验方式比 API 弱一点 */
+			webHint: '更新清单不可用，已自动改用网页方式检查；下载后仍会校验文件大小与格式。',
+			failed: (message: string) => (message ? `更新失败：${message}` : '更新失败'),
+			updated: (tag: string) => `已更新到 ${tag}`,
+		},
+
 		// ── 保存反馈（label 用上面 labels / labelXxx 里的文案）──
 		saved: (label: string) => `${label} 已保存`,
 		saveFailed: (label: string) => `${label} 保存到服务端失败（已保留本地改动）`,
@@ -740,7 +777,8 @@ export const TEXT = {
 		/** UI 风格说明，随所选风格变化；留空则不渲染 */
 		glassStyleHint(style: GlassStyle): string {
 			if (style === 'solid') return ''
-			if (style === 'liquid') return '液态玻璃效果性能需求较高，可能引起掉帧卡顿'
+			if (style === 'frost') return ''
+			if (style === 'liquid') return '液态玻璃性能开销较大，可能引起卡顿'
 			return ''
 		},
 
@@ -748,6 +786,7 @@ export const TEXT = {
 		glassTransparencyHint(style: GlassStyle): string {
 			if (style === 'liquid') return ''
 			if (style === 'solid') return ''
+			if (style === 'frost') return ''
 			return ''
 		},
 	},

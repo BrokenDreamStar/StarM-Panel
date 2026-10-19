@@ -9,6 +9,7 @@
 # 直接往 main 推文档之类的提交不会白跑一次全平台构建。需要在别的分支上手工验证时，
 # 用 workflow_dispatch 选分支手动跑。
 #
+# 产物文件名带 package.json 的 version，例如 starm-panel-v0.1.0-linux-x64；
 # Release tag 规则：v<package.json 的 version>-<run_number>，例如 v0.1.0-5。
 # 用运行序号而不是干净的 v0.1.0，是因为每次合并都要发一版 —— 版本号不手动抬的话，
 # 第二次合并就会撞上已存在的 tag 而失败。
@@ -43,11 +44,18 @@ jobs:
       github.event.pull_request.head.ref == 'dev' &&
       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
+    outputs:
+      # 产物文件名、Release 标题 / tag、构建摘要共用这一个版本号
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+      - name: 读取版本号
+        id: meta
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2
@@ -144,18 +152,22 @@ jobs:
           path: .
 
       # 交叉编译：bun build --compile 会把对应平台的运行时一起塞进产物（scripts/build.ts 封装）
+      # STARM_RELEASE 与下面「发布 Release」的 tag 完全一致：tag 会被写进产物，
+      # 「设置 → 关于 → 检查更新」据此判断当前构建是不是最新发布（同版本可多次发布）
       - name: 编译可执行文件
+        env:
+          STARM_RELEASE: v${{ needs.prepare.outputs.version }}-${{ github.run_number }}
         run: bun run scripts/build.ts ${{ matrix.target }}
 
       # 只有和 runner 同平台的目标能真的跑起来；其余平台只能保证编译通过
       - name: 冒烟测试（本机可执行的目标）
         if: matrix.target == 'bun-linux-x64'
-        run: ./release/starm-panel-linux-x64 --version
+        run: ./release/starm-panel-v${{ needs.prepare.outputs.version }}-linux-x64 --version
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: starm-panel-${{ matrix.name }}
+          name: starm-panel-v${{ needs.prepare.outputs.version }}-${{ matrix.name }}
           path: release/*
           if-no-files-found: error
           retention-days: 30
@@ -186,6 +198,19 @@ jobs:
           path: release-out
           merge-multiple: true
 
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # 更新清单从**即将上传的同一批文件**算出大小与 sha256，
+      # 面板的「检查更新」通过 /releases/latest/download/latest.json 读取它，
+      # 不需要 GitHub API、token，也不需要猜资产名。
+      - name: 生成更新清单 latest.json
+        env:
+          TAG: v${{ steps.meta.outputs.version }}-${{ github.run_number }}
+        run: bun run scripts/gen-update-manifest.ts release-out "$TAG"
+
       - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -202,36 +227,39 @@ jobs:
 
             | 平台 | 运行环境 | 文件 |
             | --- | --- | --- |
-            | macOS arm64 | Apple Silicon | `starm-panel-darwin-arm64` |
-            | macOS x86_64 | Intel | `starm-panel-darwin-x64` |
-            | Linux arm64 | ARM64 | `starm-panel-linux-arm64` |
-            | Linux x86_64 | AMD64 | `starm-panel-linux-x64` |
-            | Windows arm64 | ARM64 | `starm-panel-windows-arm64.exe` |
-            | Windows x86_64 | AMD64 | `starm-panel-windows-x64.exe` |
+            | macOS arm64 | Apple Silicon | `starm-panel-v${{ steps.meta.outputs.version }}-darwin-arm64` |
+            | macOS x86_64 | Intel | `starm-panel-v${{ steps.meta.outputs.version }}-darwin-x64` |
+            | Linux arm64 | ARM64 | `starm-panel-v${{ steps.meta.outputs.version }}-linux-arm64` |
+            | Linux x86_64 | AMD64 | `starm-panel-v${{ steps.meta.outputs.version }}-linux-x64` |
+            | Windows arm64 | ARM64 | `starm-panel-v${{ steps.meta.outputs.version }}-windows-arm64.exe` |
+            | Windows x86_64 | AMD64 | `starm-panel-v${{ steps.meta.outputs.version }}-windows-x64.exe` |
+
+            另外附带 `latest.json`：面板「设置 → 关于 → 检查更新」读取的更新清单，
+            包含各平台产物的文件名、大小与 sha256。
 
             macOS / Linux 首次运行前需要 `chmod +x`；macOS 从网上直接下载的二进制会被 Gatekeeper
             拦下，用 `xattr -d com.apple.quarantine <文件>` 放行。
 
   summary:
     name: 汇总产物
-    needs: [build, release]
+    needs: [prepare, build, release]
     runs-on: ubuntu-latest
     steps:
       - name: 写入构建摘要
         run: |
           {
-            echo "## StarM Panel 构建产物"
+            echo "## StarM Panel v${{ needs.prepare.outputs.version }} 构建产物"
             echo
             echo "来源提交：\`${{ github.event.pull_request.merge_commit_sha || github.sha }}\`"
             echo
             echo "| 平台 | 运行环境 | 文件 |"
             echo "| --- | --- | --- |"
-            echo "| macOS arm64 | Apple Silicon | \`starm-panel-darwin-arm64\` |"
-            echo "| macOS x86_64 | Intel | \`starm-panel-darwin-x64\` |"
-            echo "| Linux arm64 | ARM64 | \`starm-panel-linux-arm64\` |"
-            echo "| Linux x86_64 | AMD64 | \`starm-panel-linux-x64\` |"
-            echo "| Windows arm64 | ARM64 | \`starm-panel-windows-arm64.exe\` |"
-            echo "| Windows x86_64 | AMD64 | \`starm-panel-windows-x64.exe\` |"
+            echo "| macOS arm64 | Apple Silicon | \`starm-panel-v${{ needs.prepare.outputs.version }}-darwin-arm64\` |"
+            echo "| macOS x86_64 | Intel | \`starm-panel-v${{ needs.prepare.outputs.version }}-darwin-x64\` |"
+            echo "| Linux arm64 | ARM64 | \`starm-panel-v${{ needs.prepare.outputs.version }}-linux-arm64\` |"
+            echo "| Linux x86_64 | AMD64 | \`starm-panel-v${{ needs.prepare.outputs.version }}-linux-x64\` |"
+            echo "| Windows arm64 | ARM64 | \`starm-panel-v${{ needs.prepare.outputs.version }}-windows-arm64.exe\` |"
+            echo "| Windows x86_64 | AMD64 | \`starm-panel-v${{ needs.prepare.outputs.version }}-windows-x64.exe\` |"
             echo
-            echo "已发布到 Releases：\`v<版本>-<运行序号>\`；本次运行的 Artifacts 也保留 30 天。"
+            echo "已发布到 Releases：\`v${{ needs.prepare.outputs.version }}-${{ github.run_number }}\`；本次运行的 Artifacts 也保留 30 天。"
           } >> "$GITHUB_STEP_SUMMARY"

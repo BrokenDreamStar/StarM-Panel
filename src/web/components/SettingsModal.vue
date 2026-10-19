@@ -38,9 +38,11 @@ import { useAuthStore } from '@/stores/auth'
 import { api, type BackupImportMode } from '@/api/client'
 import { SETTINGS_DEFAULTS } from '@/api/settings'
 import { useDeleteConfirm } from '@/composables/useDeleteConfirm'
-import { fmtUptimeFull } from '@/utils/format'
+import { fmtBytes, fmtUptimeFull } from '@/utils/format'
 import FaviconGlyph from '@/components/FaviconGlyph.vue'
 import { TEXT as T, type SectionKey } from '@shared/text'
+import { APP_VERSION } from '@shared/version'
+import type { UpdateCheckResult, UpdateState } from '@shared/types'
 
 const props = defineProps<{ show: boolean }>()
 
@@ -749,9 +751,13 @@ async function refreshAfterImport(): Promise<void> {
 // ── 关于 ─────────────────────────────────────────────────────
 
 const platform = ref<{ os: string; arch: string; hostname: string } | null>(null)
-const health = ref<{ version: string; schemaVersion?: number; uptime: number; pid: number } | null>(
-  null,
-)
+const health = ref<{
+  version: string
+  release?: string | null
+  schemaVersion?: number
+  uptime: number
+  pid: number
+} | null>(null)
 
 /**
  * 运行时长走本地走秒：/healthz 的 uptime 只在打开弹窗 / 重启后取一次，
@@ -794,7 +800,7 @@ async function loadAbout(): Promise<void> {
   }
   try {
     const h = await api.health()
-    health.value = { version: h.version, uptime: h.uptime, pid: h.pid }
+    health.value = { version: h.version, release: h.release ?? null, uptime: h.uptime, pid: h.pid }
     uptimeAnchor.value = { seconds: h.uptime, at: Date.now() }
   } catch {
     health.value = null
@@ -864,6 +870,190 @@ async function waitForNewProcess(oldPid: number, timeoutMs = 20_000): Promise<bo
   }
   return false
 }
+
+// ── 软件更新（GitHub Releases） ─────────────────────────────
+
+/**
+ * 检查结果与更新进度。
+ *
+ * 打开「关于」时自动查一次（服务端另有 60 秒缓存，避免把 GitHub 匿名
+ * API 限额刷掉）；手动点「检查更新」只绕过本地状态，仍走服务端缓存。
+ */
+const updateCheck = ref<UpdateCheckResult | null>(null)
+const updateChecking = ref(false)
+const updateState = ref<UpdateState | null>(null)
+
+/** 下载 / 校验 / 替换 / 重启中：除了 idle 与 error，都算「进行中」 */
+const updating = computed(
+  () =>
+    updateState.value !== null &&
+    updateState.value.phase !== 'idle' &&
+    updateState.value.phase !== 'error',
+)
+
+/** 版本行：有构建期 Release tag 时一并显示，便于核对到底装的是哪次发布 */
+const currentVersionText = computed(() => {
+  const v = health.value?.version ?? itemsStore.version ?? APP_VERSION
+  return health.value?.release ? `${v}（${health.value.release}）` : v
+})
+
+const updateStatusText = computed(() => {
+  const c = updateCheck.value
+  if (!c) return T.settings.update.unknown
+  if (!c.current.supported) return T.settings.update.devMode
+  if (c.error) return T.settings.update.checkFailed(c.error)
+  if (c.hasUpdate && c.latest) return T.settings.update.available(c.latest.tag)
+  return T.settings.update.upToDate(c.latest?.tag ?? null)
+})
+
+const canApplyUpdate = computed(
+  () =>
+    updateCheck.value?.hasUpdate === true &&
+    updateCheck.value.latest?.assetName != null &&
+    !updating.value &&
+    !updateChecking.value,
+)
+
+const updatePercent = computed(() => {
+  const s = updateState.value
+  if (!s || s.total === null || s.total <= 0) return null
+  return Math.min(100, Math.max(0, Math.round((s.received / s.total) * 100)))
+})
+
+const updatePhaseText = computed(() => {
+  const s = updateState.value
+  if (!s) return ''
+  if (s.phase === 'downloading') return T.settings.update.phase.downloading(updatePercent.value)
+  if (s.phase === 'verifying') return T.settings.update.phase.verifying
+  if (s.phase === 'installing') return T.settings.update.phase.installing
+  if (s.phase === 'restarting') return T.settings.update.phase.restarting
+  if (s.phase === 'error') return T.settings.update.failed(s.error ?? '')
+  return ''
+})
+
+const updateBytesText = computed(() => {
+  const s = updateState.value
+  if (!s || s.phase !== 'downloading' || s.received <= 0) return ''
+  return T.settings.update.progress(fmtBytes(s.received), s.total ? fmtBytes(s.total) : '—')
+})
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+/** 检查更新；notify=true（手动点击）时把失败原因也弹出来 */
+async function checkUpdate(notify = false): Promise<void> {
+  if (updateChecking.value || updating.value) return
+  updateChecking.value = true
+  try {
+    const result = await api.update.check()
+    updateCheck.value = result
+    if (notify && result.error) message.warning(T.settings.update.checkFailed(result.error))
+  } catch (err) {
+    updateCheck.value = null
+    if (notify) message.error(T.settings.update.checkFailed(errText(err)))
+  } finally {
+    updateChecking.value = false
+  }
+}
+
+async function applyUpdate(): Promise<void> {
+  const target = updateCheck.value?.latest
+  if (!target || !canApplyUpdate.value) return
+
+  let oldPid = health.value?.pid ?? 0
+  if (!oldPid) {
+    try {
+      oldPid = (await api.health()).pid
+    } catch {
+      /* 拿不到就按 0 处理 */
+    }
+  }
+
+  updateState.value = {
+    phase: 'downloading',
+    tag: target.tag,
+    received: 0,
+    total: target.assetSize,
+    error: null,
+    startedAt: Date.now(),
+  }
+
+  try {
+    await api.update.apply(target.tag)
+  } catch (err) {
+    updateState.value = { ...updateState.value, phase: 'error', error: errText(err) }
+    message.error(T.settings.update.failed(errText(err)))
+    return
+  }
+
+  await waitForUpdate(oldPid, target.tag)
+}
+
+/**
+ * 轮询更新进度，直到服务端进入 restarting（状态接口连不上同样视为开始重启），
+ * 再复用重启那套「等 pid 变化」的判断，确认新进程真的接管。
+ */
+async function waitForUpdate(oldPid: number, tag: string): Promise<void> {
+  const deadline = Date.now() + 30 * 60_000
+  let restarting = false
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 700))
+    try {
+      const st = await api.update.status()
+      updateState.value = st
+      if (st.phase === 'error') {
+        message.error(T.settings.update.failed(st.error ?? ''))
+        return
+      }
+      if (st.phase === 'restarting') {
+        restarting = true
+        break
+      }
+    } catch {
+      // status 请求失败可能只是网络抖动：再用 /healthz 确认旧进程是否还在。
+      // 旧进程还在 → 继续等；连不上或 pid 已变 → 视为已经开始重启。
+      const alive = await api
+        .health()
+        .then((h) => h.pid === oldPid)
+        .catch(() => false)
+      if (!alive) {
+        restarting = true
+        break
+      }
+    }
+  }
+
+  if (!restarting) {
+    updateState.value = null
+    message.error(T.settings.restartTimeout)
+    return
+  }
+
+  if (await waitForNewProcess(oldPid)) {
+    await loadAbout()
+    updateState.value = null
+    updateCheck.value = null
+    // 新进程已经是最新版本，重新检查一遍让「关于」显示的状态跟上
+    void checkUpdate()
+    message.success(T.settings.update.updated(tag))
+  } else {
+    updateState.value = null
+    message.error(T.settings.restartTimeout)
+  }
+}
+
+// 打开「关于」时自动查一次更新状态
+watch(active, (key) => {
+  if (key === 'about') void checkUpdate()
+})
+watch(
+  () => props.show,
+  (open) => {
+    if (open && active.value === 'about') void checkUpdate()
+  },
+)
 </script>
 
 <template>
@@ -1453,7 +1643,10 @@ async function waitForNewProcess(oldPid: number, timeoutMs = 20_000): Promise<bo
                 <template v-else>
                   <div class="about">
                     <span class="kv-label">{{ T.settings.kv.version }}</span>
-                    <span class="kv-value mono">{{ health?.version ?? itemsStore.version ?? '0.1.0' }}</span>
+                    <span class="kv-value mono">{{ currentVersionText }}</span>
+
+                    <span class="kv-label">{{ T.settings.update.kvLatest }}</span>
+                    <span class="kv-value mono">{{ updateCheck?.latest?.tag ?? '—' }}</span>
 
                     <span class="kv-label">{{ T.settings.kv.uptime }}</span>
                     <span class="kv-value mono">{{ fmtUptimeFull(uptimeSeconds) }}</span>
@@ -1473,6 +1666,74 @@ async function waitForNewProcess(oldPid: number, timeoutMs = 20_000): Promise<bo
                     <span class="kv-value mono">{{ monitor.staticInfo?.os.kernel || '—' }}</span>
                   </div>
 
+                  <!-- 软件更新：标题与操作同一行、状态说明在下，避免长文案和按钮互相挤 -->
+                  <section class="update-box">
+                    <div class="update-head">
+                      <span class="update-title">{{ T.settings.update.title }}</span>
+
+                      <div class="update-actions">
+                        <NButton
+                          size="small"
+                          tertiary
+                          :loading="updateChecking"
+                          :disabled="updating"
+                          @click="checkUpdate(true)"
+                        >
+                          {{ T.settings.update.check }}
+                        </NButton>
+
+                        <NPopconfirm v-if="canApplyUpdate" @positive-click="applyUpdate">
+                          <template #trigger>
+                            <NButton size="small" type="primary">
+                              {{ T.settings.update.apply }}
+                            </NButton>
+                          </template>
+                          {{ T.settings.update.confirm(updateCheck?.latest?.tag ?? '') }}
+                        </NPopconfirm>
+
+                        <a
+                          v-if="updateCheck?.latest"
+                          class="update-link"
+                          :href="updateCheck.latest.htmlUrl"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {{ T.settings.update.releaseNotes }}
+                        </a>
+                      </div>
+                    </div>
+
+                    <p
+                      class="update-state"
+                      :class="{ 'update-state--new': updateCheck?.hasUpdate }"
+                    >
+                      {{ updateStatusText }}
+                    </p>
+
+                    <!-- 走网页备用检查时明确告知：没有更新清单里的 sha256，但仍做大小/格式校验 -->
+                    <p v-if="updateCheck?.source === 'web'" class="update-note dim">
+                      {{ T.settings.update.webHint }}
+                    </p>
+
+                    <div v-if="updateState && updateState.phase !== 'idle'" class="update-progress">
+                      <div
+                        class="update-bar"
+                        :class="{ 'update-bar--error': updateState.phase === 'error' }"
+                      >
+                        <i
+                          :style="{
+                            width: updateState.phase === 'error' ? '100%' : `${updatePercent ?? 0}%`,
+                          }"
+                        />
+                      </div>
+                      <div class="update-progress-meta">
+                        <span>{{ updatePhaseText }}</span>
+                        <span v-if="updateBytesText" class="dim">{{ updateBytesText }}</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <!-- 面板级操作统一放在底部：与上面「软件更新」用一条分隔线隔开 -->
                   <div class="about-actions">
                     <NPopconfirm @positive-click="restartPanel">
                       <template #trigger>
@@ -2024,12 +2285,120 @@ async function waitForNewProcess(oldPid: number, timeoutMs = 20_000): Promise<bo
   overflow-wrap: anywhere;
 }
 
-/* 关于页底部操作：重启在左（主操作），关闭紧随其右 */
+/* 关于页底部操作：重启在左（主操作），关闭紧随其右。
+   与上面的「软件更新」用分隔线分开；两组按钮都靠右，和设置页「左标签右控件」
+   的行式布局保持一致。 */
 .about-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  max-width: 520px;
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-4);
+  border-top: 1px solid rgba(128, 128, 128, 0.18);
+}
+
+/* ── 关于：软件更新 ───────────────────────────────────────── */
+
+/* 与规格表同宽：更新状态里的错误可能很长，别让它把面板撑开 */
+.update-box {
+  max-width: 520px;
+  margin-top: var(--sp-5);
+}
+
+/* 标题在左、操作在右；窄屏放不下时按钮整体换到下一行并靠右 */
+.update-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.update-title {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* 状态说明独立成行：开发模式 / 检查失败这类文案很长，不和标题抢宽度 */
+.update-state {
+  margin: 6px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+/* 有新版本时用主题色强调，避免跟灰色说明混在一起 */
+.update-state--new {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* 网页备用检查的说明：比状态行再淡一级，不抢主状态 */
+.update-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+
+.update-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.update-link:hover {
+  text-decoration: underline;
+}
+
+.update-progress {
+  margin-top: var(--sp-3);
+}
+
+.update-bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.2);
+}
+
+.update-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+/* 失败时进度条整条变红，状态行同时给出原因 */
+.update-bar--error i {
+  background: #d03050;
+}
+
+.update-progress-meta {
+  display: flex;
+  justify-content: space-between;
   gap: var(--sp-3);
-  margin-top: var(--sp-6);
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .mt {

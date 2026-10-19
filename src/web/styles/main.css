@@ -161,24 +161,71 @@ html[data-theme='light'][data-glass='solid'] {
 }
 
 /* ── 液态玻璃档（html[data-glass='liquid']）──────────────────
-   浅色档 = 白色液态玻璃（半透明白底 + 高斯模糊 + 边缘高光，与浮层同一套材质）；
-   深色档 = 保持透明：不铺烟色/黑底，只靠高斯模糊与 specular 边缘光把壁纸
-   透出来（黑底会把暗色壁纸压成一块糊掉的深色卡）。 */
+   高透玻璃：几乎不铺底色，壁纸清晰可见；靠四周 specular 倒角 + 斜向
+   反光把「玻璃晶体」和磨砂玻璃（乳白 + 颗粒 + 单边柔光）区分开。
+     · 浅色档：底色 α 直接取滑杆值（出厂 55% 透明 → α0.45）；
+     · 深色档：底色 α 取滑杆值的 0.68× —— 深色玻璃本身吸光，用同一个 α
+       会显得过实，和毛玻璃拉不开差距；
+     · 浮层仍用 --surface（80% / 74%）保底，保证大段文字可读。 */
 html[data-glass='liquid'] {
-  --card-rgb: 18 22 28;
-  --card-hi-rgb: 18 22 28;
-  --card-a: 0.15;
-  /* 深色档：透明底；hover 只给极淡的白色反馈 */
-  --card-bg: transparent;
-  --card-bg-hi: rgba(255, 255, 255, 0.06);
+  --glass: blur(var(--blur)) saturate(1.6) brightness(0.62) contrast(0.96);
+  --card-rgb: 16 20 28;
+  --card-hi-rgb: 22 27 36;
+  /* 设置加载前的兜底：与出厂 ui.liquidTransparency=55 对齐 */
+  --card-a: 0.45;
+  --liquid-a: calc(var(--card-a) * 0.68);
+  --card-bg: rgb(var(--card-rgb) / var(--liquid-a));
+  --card-bg-hi: rgb(var(--card-hi-rgb) / min(1, var(--liquid-a) + 0.1));
+  --liquid-sheen: radial-gradient(
+    130% 110% at 16% -12%,
+    rgba(255, 255, 255, 0.12),
+    transparent 46%
+  );
+  /* 卡片的四面镜面倒角 + 外投影；浮层用不带外投影的 flat 版 */
+  --liquid-rim:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.22),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.16),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.14),
+    inset 0 0 14px rgba(255, 255, 255, 0.05),
+    var(--shadow-2);
+  --liquid-rim-flat:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.22),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.16),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.14),
+    inset 0 0 14px rgba(255, 255, 255, 0.05);
 }
 
 html[data-theme='light'][data-glass='liquid'] {
+  --glass: blur(var(--blur)) saturate(1.7) brightness(1.04) contrast(0.96);
   --card-rgb: 255 255 255;
   --card-hi-rgb: 255 255 255;
-  /* 浅色档：白色半透明底，复用 --surface 与浮层完全一致 */
-  --card-bg: var(--surface);
-  --card-bg-hi: rgb(var(--card-hi-rgb) / min(1, var(--surface-a) + var(--card-a-step)));
+  --liquid-a: var(--card-a);
+  --card-bg: rgb(var(--card-rgb) / var(--liquid-a));
+  --card-bg-hi: rgb(var(--card-hi-rgb) / min(1, var(--liquid-a) + 0.06));
+  --liquid-sheen: radial-gradient(
+    130% 110% at 16% -12%,
+    rgba(255, 255, 255, 0.26),
+    transparent 46%
+  );
+  --liquid-rim:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.28),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.26),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.2),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.22),
+    inset 0 0 14px rgba(255, 255, 255, 0.06),
+    var(--shadow-2);
+  --liquid-rim-flat:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.28),
+    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.26),
+    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.2),
+    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.22),
+    inset 0 0 14px rgba(255, 255, 255, 0.06);
 }
 
 /* ── 壁纸文字自定义档 ───────────────────────────────────────
@@ -261,17 +308,30 @@ body {
 }
 
 /* ── 液态玻璃材质（html[data-glass='liquid'] 由 useGlassTheme 写入）────
-   白色液态玻璃 = 半透明底（--card-bg = --surface）+ 高斯模糊 + 边缘高光，
-   与设置弹窗等浮层是同一套材质：
-     specular 边缘光 —— 顶边最亮、侧边次之、底边是反光，模拟单一
-     上方光源扫过玻璃棱边；再垫主题化外投影把玻璃「浮」起来。
-   挂在独立 ::after 上（卡片组件都没占用它）。
-   浮层（弹窗 / 二级菜单）共用同一套边缘光，见下方 .surface 块。 */
+   高透玻璃 = 低 α 底色 + 高斯模糊 + 四周 specular 倒角 + 斜向反光，
+   与毛玻璃（乳白底 + 细颗粒 + 单边柔光）是两种不同材质：
+     · 卡片：background-image 铺一层斜向高光（垫在内容下），::after 画四面镜面
+       倒角（顶边最亮、侧边次之、底边反光），再垫主题化外投影；
+     · 浮层（设置弹窗 / 二级菜单）只共用倒角，不铺高光，也不叠加外投影
+       —— 浮层本身已有 --shadow-3。
+   卡片组件都没占用这两个伪元素。 */
 [data-glass='liquid'] [data-glass-card],
 [data-glass='liquid'] .card,
 [data-glass='liquid'] .add-tile,
 [data-glass='liquid'] .float-controls .group {
   position: relative;
+}
+
+/* 卡片的斜向反光：直接铺在元素 background-image 上（垫在内容下），
+   不再用负 z-index 伪元素 —— backdrop-filter 元素多一个合成层时，
+   Chromium 在重绘（hover / SSE 刷新）会偶发白色闪块。 */
+[data-glass='liquid'] [data-glass-card],
+[data-glass='liquid'] .card,
+[data-glass='liquid'] .add-tile {
+  background-image: var(--liquid-sheen) !important;
+  background-size: 100% 100% !important;
+  background-repeat: no-repeat !important;
+  background-position: 0 0 !important;
 }
 
 [data-glass='liquid'] [data-glass-card]::after,
@@ -283,23 +343,16 @@ body {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.24),
-    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.17),
-    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
-    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.15),
-    inset 0 0 14px rgba(255, 255, 255, 0.055),
-    var(--shadow-2);
+  box-shadow: var(--liquid-rim);
 }
 
 /* ── 浮层的液态玻璃材质 ─────────────────────────────────────
-   设置弹窗 / 详情弹窗 / 二级菜单（下拉、选择、气泡）在 liquid 风格下
-   与卡片共用「光泽层 + specular 边缘光」，只是不再叠加外投影 ——
-   浮层本身已有 --shadow-3，再堆一层会把投影糊成一团。
+   设置弹窗 / 详情弹窗 / 二级菜单（下拉、选择、气泡）共用四面 specular
+   倒角，但不叠加外投影 —— 浮层本身已有 --shadow-3。
    .n-card 的 ::after 在别处被 display:none 关过（去边框），这里显式恢复。 */
 [data-glass='liquid'] .surface,
 [data-glass='liquid'] .settings-modal,
+[data-glass='liquid'] .lock-card,
 [data-glass='liquid'] .n-modal.n-card,
 [data-glass='liquid'] .n-modal .n-card,
 [data-glass='liquid'] .n-modal-presets.n-card,
@@ -312,6 +365,7 @@ body {
 
 [data-glass='liquid'] .surface::after,
 [data-glass='liquid'] .settings-modal::after,
+[data-glass='liquid'] .lock-card::after,
 [data-glass='liquid'] .n-modal.n-card::after,
 [data-glass='liquid'] .n-modal .n-card::after,
 [data-glass='liquid'] .n-modal-presets.n-card::after,
@@ -328,87 +382,80 @@ body {
   display: block !important;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 1.5px 3px -1px rgba(255, 255, 255, 0.24),
-    inset 1.5px 0 2px -1.5px rgba(255, 255, 255, 0.17),
-    inset -1.5px 0 2px -1.5px rgba(255, 255, 255, 0.12),
-    inset 0 -1.5px 2px -1px rgba(255, 255, 255, 0.15),
-    inset 0 0 14px rgba(255, 255, 255, 0.055);
+  box-shadow: var(--liquid-rim-flat);
 }
 
-/* ── 毛玻璃材质（html[data-glass='frost']）────────────────────
-   blur 只解决「背后壁纸糊不糊」；磨砂玻璃还有材质本身的语言，否则把
-   模糊度调到 0、透明度调到 0 就和扁平化完全重叠。这一层给三件事：
-     ① 奶光渐变 —— 上亮下柔的白纱，底部收一点冷调，白卡上也能看出竖直层次；
-     ② 散射内晕 —— 一圈很淡的冷色内发光，模拟磨砂边缘把光打散（不是硬边线）；
-     ③ 浮起投影 —— 比扁平化厚一档，像一块玻璃板悬在页面上。
-   强度整体比液态玻璃克制：液态是锐利 specular + 折射，磨砂是漫射 + 雾面。 */
-[data-glass='frost'] {
-  /* 背板比中性模糊再提一点亮、加饱和，透出背景时更「磨砂玻璃」 */
-  --glass: blur(var(--blur)) saturate(1.8) brightness(1.04);
-  /* 磨砂雾面（feTurbulence 灰度噪点 → 高斯模糊）：靠它给卡片「霜面」质感，
-     白卡上也看得见。后接 feGaussianBlur 把颗粒打散成柔雾（而不是数码噪点），
-     透明度压得很低，不至于盖过文字 */
-  --frost-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeGaussianBlur stdDeviation='0.7'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.22'/%3E%3C/svg%3E");
+/* ── 毛玻璃材质：细砂磨砂玻璃（html[data-glass='frost']）────────
+   一块「磨砂玻璃板」：壁纸仍透出柔和的色块与明暗，表面有一层极细的
+   磨砂颗粒，棱边只有顶部柔光 + 内圈散射 + 底部暗边（不画整圈描边，
+   仍然遵守「去线」）。与液态玻璃的区别：
+     · liquid = 高透 + 四周 3D specular 倒角 + 折射感（玻璃晶体）；
+     · frost  = 乳白半透明 + 细颗粒 + 单边柔光（磨砂玻璃板）。
+   颗粒与光泽直接铺在元素自身的 background-image 上（垫在内容之下），
+   不再挂独立 ::before + 负 z-index：backdrop-filter 元素多一个合成层时，
+   Chromium 在 hover / SSE 重绘中会偶发白色闪块。棱光挂在 ::after 上。 */
+html[data-glass='frost'] {
+  /* 1× 模糊：滑杆写 12px 就是 12px，保留壁纸的色块与层次 */
+  --glass: blur(var(--blur)) saturate(1.8) brightness(0.95);
+  /* 烟灰蓝底 + 极微主题色环境染色（深色档） */
+  --card-rgb: 28 32 40;
+  --card-hi-rgb: 34 39 48;
+  --card-a-step: 0.06;
+  --frost-base: color-mix(in srgb, rgb(var(--card-rgb)), var(--accent) 2.5%);
+  --frost-base-hi: color-mix(in srgb, rgb(var(--card-hi-rgb)), var(--accent) 2%);
+  --card-bg: color-mix(in srgb, var(--frost-base) calc(var(--card-a) * 100%), transparent);
+  --card-bg-hi: color-mix(
+    in srgb,
+    var(--frost-base-hi) calc(min(1, var(--card-a) + var(--card-a-step)) * 100%),
+    transparent
+  );
+  /* 浮层保底 80% 不透明：大段文字在复杂壁纸上仍然可读 */
+  --surface-a: max(0.8, var(--card-a));
+  --surface: color-mix(in srgb, var(--frost-base-hi) calc(var(--surface-a) * 100%), transparent);
+  --shadow-1: 0 2px 4px rgba(0, 0, 0, 0.3), 0 14px 30px -16px rgba(0, 0, 0, 0.6);
+  --shadow-2: 0 4px 8px -2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.66);
+  /* 磨砂颗粒：细层做砂感，粗层做不均匀的云雾；两层都垫在内容下面 */
+  --frost-fine: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncR type='linear' slope='2.1' intercept='-0.55'/%3E%3CfeFuncG type='linear' slope='2.1' intercept='-0.55'/%3E%3CfeFuncB type='linear' slope='2.1' intercept='-0.55'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23f)' opacity='.11'/%3E%3C/svg%3E");
+  --frost-coarse: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='c'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.12' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23c)' opacity='.035'/%3E%3C/svg%3E");
+  --frost-sheen: linear-gradient(158deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 46%);
+  --frost-rim:
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 0 18px rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+  --frost-rim-sm:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 10px rgba(255, 255, 255, 0.05),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='light'][data-glass='frost'] {
+  --glass: blur(var(--blur)) saturate(1.95) brightness(1.02);
+  /* 冷白底 + 极微主题色环境染色（浅色档） */
+  --card-rgb: 249 251 254;
+  --card-hi-rgb: 252 253 255;
+  --frost-base: color-mix(in srgb, rgb(var(--card-rgb)), var(--accent) 3%);
+  --frost-base-hi: color-mix(in srgb, rgb(var(--card-hi-rgb)), var(--accent) 2%);
+  --surface-a: max(0.8, var(--card-a));
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 24px -16px rgba(15, 23, 42, 0.32);
+  --shadow-2: 0 2px 4px rgba(15, 23, 42, 0.06), 0 16px 34px -18px rgba(15, 23, 42, 0.36);
+  --frost-sheen: linear-gradient(158deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 46%);
+  --frost-rim:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 0 18px rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(17, 24, 39, 0.05);
+  --frost-rim-sm:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 0 10px rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(17, 24, 39, 0.04);
 }
 
 [data-glass='frost'] [data-glass-card],
 [data-glass='frost'] .card,
 [data-glass='frost'] .add-tile,
-[data-glass='frost'] .float-controls .group {
-  position: relative;
-}
-
-[data-glass='frost'] [data-glass-card]::after,
-[data-glass='frost'] .card::after,
-[data-glass='frost'] .add-tile::after,
-[data-glass='frost'] .float-controls .group::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    var(--frost-grain) 0 0 / 120px 120px repeat,
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.46) 0%,
-      rgba(255, 255, 255, 0.08) 34%,
-      rgba(255, 255, 255, 0) 56%,
-      color-mix(in srgb, #33507f 12%, transparent) 100%
-    );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.62),
-    inset 0 -3px 10px -3px rgba(43, 66, 112, 0.18),
-    inset 0 0 30px rgba(56, 92, 160, 0.1),
-    var(--shadow-2);
-}
-
-[data-theme='dark'][data-glass='frost'] [data-glass-card]::after,
-[data-theme='dark'][data-glass='frost'] .card::after,
-[data-theme='dark'][data-glass='frost'] .add-tile::after,
-[data-theme='dark'][data-glass='frost'] .float-controls .group::after {
-  background:
-    var(--frost-grain) 0 0 / 120px 120px repeat,
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.12) 0%,
-      rgba(255, 255, 255, 0.025) 34%,
-      rgba(255, 255, 255, 0) 56%,
-      rgba(0, 0, 0, 0.2) 100%
-    );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    inset 0 -3px 10px -3px rgba(0, 0, 0, 0.22),
-    inset 0 0 26px rgba(255, 255, 255, 0.07),
-    var(--shadow-2);
-}
-
-/* 浮层的磨砂材质：与卡片同源，只是不叠外投影（浮层本身已有 --shadow-3）。
-   .n-card 的 ::after 在别处被 display:none 关过，这里显式恢复。 */
+[data-glass='frost'] .float-controls .group,
 [data-glass='frost'] .surface,
 [data-glass='frost'] .settings-modal,
+[data-glass='frost'] .lock-card,
 [data-glass='frost'] .n-modal.n-card,
 [data-glass='frost'] .n-modal .n-card,
 [data-glass='frost'] .n-modal-presets.n-card,
@@ -419,8 +466,44 @@ body {
   position: relative;
 }
 
+/* 磨砂颗粒与光泽直接铺在元素自身的 background-image 上（垫在内容下）。
+   不要再挂独立 ::before + 负 z-index：backdrop-filter 元素多一个合成层时，
+   Chromium 在重绘（hover / SSE 刷新）会偶发白色闪块。 */
+[data-glass='frost'] [data-glass-card],
+[data-glass='frost'] .card,
+[data-glass='frost'] .add-tile,
+[data-glass='frost'] .float-controls .group {
+  background-image: var(--frost-sheen), var(--frost-fine), var(--frost-coarse) !important;
+  background-size: 100% 100%, 160px 160px, 256px 256px !important;
+  background-repeat: no-repeat, repeat, repeat !important;
+  background-position: 0 0, 0 0, 0 0 !important;
+}
+
+/* 大面积浮层只铺云雾 + 光泽，不铺细砂，避免整屏看起来像噪点 */
+[data-glass='frost'] .surface,
+[data-glass='frost'] .settings-modal,
+[data-glass='frost'] .lock-card,
+[data-glass='frost'] .n-modal.n-card,
+[data-glass='frost'] .n-modal .n-card,
+[data-glass='frost'] .n-modal-presets.n-card,
+[data-glass='frost'] .n-popover:not(.n-popover--plain),
+[data-glass='frost'] .n-dropdown-menu,
+[data-glass='frost'] .n-select-menu,
+[data-glass='frost'] .n-dialog {
+  background-image: var(--frost-sheen), var(--frost-coarse) !important;
+  background-size: 100% 100%, 256px 256px !important;
+  background-repeat: no-repeat, repeat !important;
+  background-position: 0 0, 0 0 !important;
+}
+
+/* 棱光层：顶部柔光 + 内圈散射 + 底部暗边，表达玻璃厚度；不画整圈描边 */
+[data-glass='frost'] [data-glass-card]::after,
+[data-glass='frost'] .card::after,
+[data-glass='frost'] .add-tile::after,
+[data-glass='frost'] .float-controls .group::after,
 [data-glass='frost'] .surface::after,
 [data-glass='frost'] .settings-modal::after,
+[data-glass='frost'] .lock-card::after,
 [data-glass='frost'] .n-modal.n-card::after,
 [data-glass='frost'] .n-modal .n-card::after,
 [data-glass='frost'] .n-modal-presets.n-card::after,
@@ -434,39 +517,13 @@ body {
   display: block !important;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.34) 0%,
-    rgba(255, 255, 255, 0.05) 38%,
-    rgba(255, 255, 255, 0) 58%,
-    color-mix(in srgb, #33507f 9%, transparent) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.52),
-    inset 0 -3px 12px -3px rgba(43, 66, 112, 0.16),
-    inset 0 0 34px rgba(56, 92, 160, 0.08);
+  background: none;
+  box-shadow: var(--frost-rim);
 }
 
-[data-theme='dark'][data-glass='frost'] .surface::after,
-[data-theme='dark'][data-glass='frost'] .settings-modal::after,
-[data-theme='dark'][data-glass='frost'] .n-modal.n-card::after,
-[data-theme='dark'][data-glass='frost'] .n-modal .n-card::after,
-[data-theme='dark'][data-glass='frost'] .n-modal-presets.n-card::after,
-[data-theme='dark'][data-glass='frost'] .n-popover:not(.n-popover--plain)::after,
-[data-theme='dark'][data-glass='frost'] .n-dropdown-menu::after,
-[data-theme='dark'][data-glass='frost'] .n-select-menu::after,
-[data-theme='dark'][data-glass='frost'] .n-dialog::after {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.08) 0%,
-    rgba(255, 255, 255, 0.015) 38%,
-    rgba(255, 255, 255, 0) 58%,
-    rgba(0, 0, 0, 0.18) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    inset 0 -3px 12px -3px rgba(0, 0, 0, 0.2),
-    inset 0 0 30px rgba(255, 255, 255, 0.06);
+/* 40px 高的小胶囊：内圈散射收小一档，避免光晕把整个控件洗白 */
+[data-glass='frost'] .float-controls .group::after {
+  box-shadow: var(--frost-rim-sm);
 }
 
 /* 需要挡住后面内容的浮层（弹窗 / 二级菜单）用 --surface：

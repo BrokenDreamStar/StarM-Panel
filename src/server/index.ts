@@ -18,6 +18,7 @@ import { wallpaperRoutes } from './routes/wallpaper'
 import { backupRoutes } from './routes/backup'
 import { bootstrapRoutes } from './routes/bootstrap'
 import { authRoutes } from './routes/auth'
+import { updateRoutes } from './routes/update'
 import { registerStatic } from './static'
 import { monitor } from './services/monitor'
 import { HELP, getConfig, resolveConfig } from './env'
@@ -29,8 +30,8 @@ import { bindBunServer } from './services/client-ip'
 import { getSetting } from './services/settings'
 import { registerRestartHooks } from './services/restart'
 import { bgDir, ensureBgDir } from './services/bg-store'
-
-const VERSION = '0.1.0'
+import { cleanupStaleUpdateFiles } from './services/update'
+import { APP_VERSION as VERSION, RELEASE_TAG } from '@shared/version'
 
 // --help / --version 必须在任何副作用（建库、建数据目录）之前处理，
 // 因此这里用 resolveConfig 而不是 getConfig。
@@ -40,7 +41,7 @@ if (help) {
   process.exit(0)
 }
 if (version) {
-  console.log(`starm-panel ${VERSION}`)
+  console.log(`starm-panel ${VERSION}${RELEASE_TAG ? ` (${RELEASE_TAG})` : ''}`)
   process.exit(0)
 }
 
@@ -98,6 +99,8 @@ app.get('/healthz', (c) =>
   c.json({
     status: 'ok',
     version: VERSION,
+    /** 构建期注入的 Release tag（开发模式为 null），「关于」页用它判断更新 */
+    release: RELEASE_TAG,
     schemaVersion: SCHEMA_VERSION,
     uptime: Math.round(process.uptime()),
     pid: process.pid,
@@ -119,6 +122,7 @@ app.route('/api/local-image', localImageRoutes)
 app.route('/api/favicon', faviconRoutes)
 app.route('/api/wallpaper', wallpaperRoutes)
 app.route('/api/backup', backupRoutes)
+app.route('/api/update', updateRoutes)
 
 // 必须最后注册：捕获所有未匹配路径，输出嵌入的前端资源
 registerStatic(app)
@@ -151,15 +155,40 @@ const server = Bun.serve({
     return app.fetch(req)
   },
   development: false,
+  // 检查更新会依次访问 GitHub 清单 / 网页（单步 10 秒超时，最坏约 40 秒）。
+  // Bun 默认 10 秒的空闲超时会在正常等待外部网络时直接切断连接，
+  // 前端只会看到「Empty reply from server」；这里放宽到 60 秒。
+  idleTimeout: 60,
 })
 
-const displayHost = config.host === '0.0.0.0' ? 'localhost' : config.host
+/**
+ * 启动横幅里的监听信息。
+ *
+ * 绑定 0.0.0.0 表示监听所有网卡（局域网可访问），但浏览器不能直接打开这个地址，
+ * 所以「监听」显示实际绑定地址、「访问」给本机可用的 URL。旧版这里只打印
+ * `http://localhost:3002`，看起来像面板只监听了 127.0.0.1。
+ */
+function describeListen(host: string, port: number): { bind: string; url: string } {
+  const wildcard = host === '0.0.0.0' || host === '::'
+  const hostPart = host.includes(':') ? `[${host}]` : host
+  return {
+    bind: `${hostPart}:${port}${wildcard ? '（所有网卡，局域网可访问）' : ''}`,
+    url: `http://${wildcard ? 'localhost' : hostPart}:${port}`,
+  }
+}
+
+const listen = describeListen(config.host, server.port ?? config.port)
 console.log(`
-  StarM Panel v${VERSION}
+  StarM Panel v${VERSION}${RELEASE_TAG ? ` (${RELEASE_TAG})` : ''}
   ────────────────────────────────────────
-  监听    http://${displayHost}:${server.port}
+  监听    ${listen.bind}
+  访问    ${listen.url}
   运行时  Bun ${Bun.version} (${process.platform}-${process.arch})
 `)
+
+// 端口已经监听成功，说明刚被替换上的新版本至少能正常启动 ——
+// 此时再清理上一版留下的 .old 回滚点与更新临时文件（见 services/update）。
+cleanupStaleUpdateFiles()
 
 let shuttingDown = false
 

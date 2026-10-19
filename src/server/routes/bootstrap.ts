@@ -13,8 +13,7 @@ import { toGroup, toItem } from '../db/mappers'
 import { getAllSettings } from '../services/settings'
 import { gateMode } from '../services/auth'
 import type { BootstrapPayload } from '@shared/types'
-
-const VERSION = '0.1.0'
+import { APP_VERSION as VERSION } from '@shared/version'
 
 export const bootstrapRoutes = new Hono().get('/', (c) => {
   const groupRows = db.select().from(groups).orderBy(asc(groups.sort), asc(groups.id)).all()

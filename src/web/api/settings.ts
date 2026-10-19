@@ -88,8 +88,10 @@ export const SETTINGS_DEFAULTS = {
    * 字面值，没有「0 = 跟随风格默认」的哨兵（哨兵会让滑杆 0→1 跨完整个区间）。
    */
   'ui.solidTransparency': 10,
-  'ui.frostTransparency': 20,
-  'ui.liquidTransparency': 85,
+  /** 毛玻璃出厂 32%（α0.68）：再高会接近实色，再低文字对比度开始吃紧 */
+  'ui.frostTransparency': 32,
+  /** 液态玻璃出厂 55%（α0.45）：保持高透，同时给文字留出可读的底色 */
+  'ui.liquidTransparency': 55,
   /** 模糊半径（px）按风格独立，0 = 不模糊 */
   'ui.frostBlur': 12,
   'ui.liquidBlur': 12,

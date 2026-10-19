@@ -15,6 +15,8 @@ import type {
   Item,
   SystemSnapshot,
   SystemStaticInfo,
+  UpdateCheckResult,
+  UpdateState,
 } from '@shared/types'
 import { TEXT as T } from '@shared/text'
 
@@ -225,9 +227,15 @@ async function exportBackup(withAssets: boolean): Promise<BackupExport> {
 
 export const api = {
   health: () =>
-    request<{ status: string; version: string; uptime: number; pid: number; platform: string }>(
-      '/healthz',
-    ),
+    request<{
+      status: string
+      version: string
+      /** 构建期注入的 Release tag；开发模式为 null */
+      release?: string | null
+      uptime: number
+      pid: number
+      platform: string
+    }>('/healthz'),
 
   bootstrap: () => request<BootstrapPayload>('/api/bootstrap'),
 
@@ -315,6 +323,19 @@ export const api = {
     export: (opts?: { assets?: boolean }) => exportBackup(opts?.assets === true),
     import: (payload: unknown, mode: BackupImportMode = 'merge') =>
       request<BackupImportResult>(`/api/backup/import?mode=${mode}`, json(payload)),
+  },
+
+  /**
+   * 软件更新（从 GitHub Releases 拉取）。
+   *
+   * apply 只拿到 202「已受理」：下载与替换在服务端后台进行，
+   * 必须轮询 status 看进度，替换完成后服务端会自动重启（轮询会短暂连不上）。
+   */
+  update: {
+    check: () => request<UpdateCheckResult>('/api/update/check'),
+    status: () => request<UpdateState>('/api/update/status'),
+    apply: (tag: string) =>
+      request<{ ok: boolean; tag: string }>('/api/update/apply', json({ tag })),
   },
 
   /** 服务端抓取 favicon（M4）—— 抓不到就抛错，前端只提示失败 */
