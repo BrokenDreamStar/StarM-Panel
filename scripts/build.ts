@@ -9,10 +9,11 @@
  * 交叉编译的前提是全部依赖均为纯 JS 或运行时内置（见 docs/DESIGN.md §2.2 ADR-001）：
  * bun:sqlite 内置、systeminformation 纯 JS、Hono 零依赖 —— 满足条件。
  *
- * 产物文件名带版本号（取自 package.json）：release/starm-panel-v0.1.0-linux-x64。
+ * 产物文件名带版本号（取自 package.json）：release/starm-panel-v0.1.1-linux-x64。
  * 同一个 release 目录里放多个版本时不会互相覆盖，下载页也能一眼看出是哪个版本。
  *
- * 发布流水线额外传 `STARM_RELEASE=v0.1.0-5`（Release tag）：它会被
+ * 发布流水线额外传 `STARM_RELEASE`（Release tag）：版本首发是 `v0.1.1`，
+ * 同版本重复发布是 `v0.1.1-2`。它会被
  * `--define __STARM_RELEASE__` 写进产物，供「检查更新」判断当前是不是最新发布 ——
  * 只看 package.json 的版本号无法区分「同版本的又一次发布」。
  */
@@ -35,7 +36,7 @@ const ASSETS_FILE = resolve(ROOT, 'src/server/generated/assets.ts')
 const RELEASE_TAG = (process.env['STARM_RELEASE'] ?? '').trim()
 if (RELEASE_TAG && !parseReleaseTag(RELEASE_TAG)) {
   console.error(
-    `\n[build] STARM_RELEASE 取值非法：${RELEASE_TAG}\n  形如 v0.1.0-5（与 Release tag 一致）\n`,
+    `\n[build] STARM_RELEASE 取值非法：${RELEASE_TAG}\n  形如 v0.1.1 或 v0.1.1-2（与 Release tag 一致）\n`,
   )
   process.exit(1)
 }
