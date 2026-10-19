@@ -901,7 +901,7 @@ const updateStatusText = computed(() => {
   const c = updateCheck.value
   if (!c) return T.settings.update.unknown
   if (!c.current.supported) return T.settings.update.devMode
-  if (c.error) return T.settings.update.checkFailed(c.error)
+  if (c.error) return T.settings.update.checkFailed
   if (c.hasUpdate && c.latest) return T.settings.update.available(c.latest.tag)
   return T.settings.update.upToDate(c.latest?.tag ?? null)
 })
@@ -941,17 +941,17 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-/** 检查更新；notify=true（手动点击）时把失败原因也弹出来 */
+/** 检查更新；notify=true（手动点击）时把失败也用 toast 提示一次（不带原因） */
 async function checkUpdate(notify = false): Promise<void> {
   if (updateChecking.value || updating.value) return
   updateChecking.value = true
   try {
     const result = await api.update.check()
     updateCheck.value = result
-    if (notify && result.error) message.warning(T.settings.update.checkFailed(result.error))
-  } catch (err) {
+    if (notify && result.error) message.warning(T.settings.update.checkFailed)
+  } catch {
     updateCheck.value = null
-    if (notify) message.error(T.settings.update.checkFailed(errText(err)))
+    if (notify) message.error(T.settings.update.checkFailed)
   } finally {
     updateChecking.value = false
   }
