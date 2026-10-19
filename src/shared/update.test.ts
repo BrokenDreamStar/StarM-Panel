@@ -8,6 +8,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   assetNameCandidates,
   compareVersions,
+  compressedAssetName,
   isAllowedDownloadUrl,
   isAllowedSourceUrl,
   isNewerRelease,
@@ -229,6 +230,50 @@ describe('parseUpdateManifest', () => {
       }),
     ).toBeNull()
   })
+
+  test('带 zstd 压缩包：解析出压缩包名 / 大小 / sha256（统一小写）', () => {
+    const zsha = 'b'.repeat(64)
+    const manifest = parseUpdateManifest({
+      ...base,
+      assets: [
+        {
+          platform: 'linux-x64',
+          name: 'starm-panel-v0.1.0-linux-x64',
+          size: 123,
+          sha256: sha,
+          zstd: { name: 'starm-panel-v0.1.0-linux-x64.zst', size: 45, sha256: zsha.toUpperCase() },
+        },
+      ],
+    })
+    expect(manifest?.assets[0]?.zstd).toEqual({
+      name: 'starm-panel-v0.1.0-linux-x64.zst',
+      size: 45,
+      sha256: zsha,
+    })
+  })
+
+  test('没有 zstd 字段＝旧版清单，照常可用；null 等同于没有', () => {
+    expect(parseUpdateManifest(base)?.assets[0]?.zstd).toBeNull()
+    const withNull = parseUpdateManifest({
+      ...base,
+      assets: [{ platform: 'linux-x64', name: 'starm-panel-v0.1.0-linux-x64', size: 1, sha256: sha, zstd: null }],
+    })
+    expect(withNull?.assets[0]?.zstd).toBeNull()
+  })
+
+  test('zstd 字段不合法时整份清单判坏', () => {
+    const name = 'starm-panel-v0.1.0-linux-x64'
+    const withZstd = (zstd: unknown) =>
+      parseUpdateManifest({ ...base, assets: [{ platform: 'linux-x64', name, size: 123, sha256: sha, zstd }] })
+    // 压缩包必须就是同一条目的安装包加 .zst
+    expect(withZstd({ name: 'other.zst', size: 1, sha256: sha })).toBeNull()
+    expect(withZstd({ name: `${name}.tar.zst`, size: 1, sha256: sha })).toBeNull()
+    expect(withZstd({ name: `${name}.zst`, size: 1, sha256: sha })?.assets[0]?.zstd?.name).toBe(`${name}.zst`)
+    // 大小 / sha256 / 类型非法
+    expect(withZstd({ name: `${name}.zst`, size: 0, sha256: sha })).toBeNull()
+    expect(withZstd({ name: `${name}.zst`, size: 1, sha256: 'nope' })).toBeNull()
+    expect(withZstd('zstd')).toBeNull()
+  })
 })
 
 describe('下载地址白名单', () => {
@@ -327,5 +372,16 @@ describe('isPlatformExecutableHeader', () => {
     expect(isPlatformExecutableHeader(html, 'win32')).toBe(false)
     expect(isPlatformExecutableHeader(elf, 'darwin')).toBe(false)
     expect(isPlatformExecutableHeader(new Uint8Array([0x7f, 0x45]), 'linux')).toBe(false)
+  })
+})
+
+describe('compressedAssetName', () => {
+  test('压缩包名固定是安装包名加 .zst', () => {
+    expect(compressedAssetName('starm-panel-v0.1.2-linux-x64')).toBe('starm-panel-v0.1.2-linux-x64.zst')
+    expect(compressedAssetName('starm-panel-v0.1.2-windows-x64.exe')).toBe(
+      'starm-panel-v0.1.2-windows-x64.exe.zst',
+    )
+    // .zst 文件本身不会被当成安装包（平台识别取的是尾部后缀）
+    expect(platformFromAssetName('starm-panel-v0.1.2-linux-x64.zst')).toBeNull()
   })
 })

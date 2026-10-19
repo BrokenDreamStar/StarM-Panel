@@ -13,16 +13,26 @@
  *
  * 清单从**即将上传的同一批文件**算出 sha256，与二进制一一对应；
  * 六个平台缺任何一个都直接失败 —— 宁可这次不发版，也不发一份残缺清单。
+ *
+ * 每个平台产物同时压一份 `<文件名>.zst`（level 19，实测 60–84MB → 19–29MB）：
+ * 更新器优先下载压缩包、解压后再按未压缩产物的 size / sha256 校验，
+ * 所以压缩只影响下载流量，不影响校验强度与安装后的体积。
+ * 原始产物照旧上传 —— 旧版客户端（不认识 `zstd` 字段）仍然直接下它。
  */
 import { readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import {
+  COMPRESSED_ASSET_EXT,
   UPDATE_PLATFORMS,
+  compressedAssetName,
   parseReleaseTag,
   platformFromAssetName,
   type UpdateManifest,
   type UpdateManifestAsset,
 } from '../src/shared/update'
+
+/** zstd 压缩级别：19 是「离线一次、下载无数次」场景的常用档位，单产物约 15–20 秒 */
+const ZSTD_LEVEL = 19
 
 function fail(message: string): never {
   console.error(`\n[manifest] ${message}\n`)
@@ -56,9 +66,10 @@ try {
 }
 
 // 文件名 → 平台。重复（新旧两代命名同时存在）视为错误，避免清单指向不确定的文件。
+// `.zst` 是本脚本自己产的压缩包，不是安装包本体，跳过。
 const byPlatform = new Map<string, string>()
 for (const name of names) {
-  if (name === 'latest.json' || name.startsWith('.')) continue
+  if (name === 'latest.json' || name.startsWith('.') || name.endsWith(COMPRESSED_ASSET_EXT)) continue
   const platform = platformFromAssetName(name)
   if (!platform) continue
   if (byPlatform.has(platform)) {
@@ -79,20 +90,29 @@ for (const platform of UPDATE_PLATFORMS) {
   const path = join(dir, name)
   const stat = statSync(path)
   if (!stat.isFile() || stat.size <= 0) fail(`${name} 不是有效的非空文件`)
-  const size = stat.size
 
-  // 流式算 sha256：产物 60–80MB，不把整个文件读进内存
-  const hasher = new Bun.CryptoHasher('sha256')
-  const reader = Bun.file(path).stream().getReader()
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    hasher.update(value)
-  }
-  const sha256 = hasher.digest('hex')
+  // 产物 60–84MB：整个读进内存再压缩（六平台顺序处理，同一时刻只占一份），
+  // zstd 19 级单产物约 15–20 秒，整个发布任务多花两分钟左右，换来下载量省 2/3。
+  const bytes = new Uint8Array(await Bun.file(path).arrayBuffer())
+  const size = bytes.byteLength
+  const sha256 = new Bun.CryptoHasher('sha256').update(bytes).digest('hex')
 
-  assets.push({ platform, name, size, sha256 })
-  console.log(`  ${platform.padEnd(14)} ${name}  ${sha256.slice(0, 12)}…  ${size} bytes`)
+  const zstdBytes = Bun.zstdCompressSync(bytes, { level: ZSTD_LEVEL })
+  const zstdName = compressedAssetName(name)
+  await Bun.write(join(dir, zstdName), zstdBytes)
+  const zstdSha256 = new Bun.CryptoHasher('sha256').update(zstdBytes).digest('hex')
+
+  assets.push({
+    platform,
+    name,
+    size,
+    sha256,
+    zstd: { name: zstdName, size: zstdBytes.byteLength, sha256: zstdSha256 },
+  })
+  console.log(
+    `  ${platform.padEnd(14)} ${name}  ${sha256.slice(0, 12)}…  ${size} bytes` +
+      `  →  ${zstdName}  ${zstdBytes.byteLength} bytes（${((100 * zstdBytes.byteLength) / size).toFixed(0)}%）`,
+  )
 }
 
 const manifest: UpdateManifest = {
