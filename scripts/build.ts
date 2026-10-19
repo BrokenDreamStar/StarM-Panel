@@ -8,14 +8,45 @@
  *
  * 交叉编译的前提是全部依赖均为纯 JS 或运行时内置（见 docs/DESIGN.md §2.2 ADR-001）：
  * bun:sqlite 内置、systeminformation 纯 JS、Hono 零依赖 —— 满足条件。
+ *
+ * 产物文件名带版本号（取自 package.json）：release/starm-panel-v0.1.0-linux-x64。
+ * 同一个 release 目录里放多个版本时不会互相覆盖，下载页也能一眼看出是哪个版本。
+ *
+ * 发布流水线额外传 `STARM_RELEASE=v0.1.0-5`（Release tag）：它会被
+ * `--define __STARM_RELEASE__` 写进产物，供「检查更新」判断当前是不是最新发布 ——
+ * 只看 package.json 的版本号无法区分「同版本的又一次发布」。
  */
 import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
+import { APP_VERSION } from '../src/shared/version'
+import { parseReleaseTag } from '../src/shared/update'
 
 const ROOT = resolve(import.meta.dir, '..')
 const ENTRY = resolve(ROOT, 'src/server/index.ts')
 const OUT_DIR = resolve(ROOT, 'release')
 const ASSETS_FILE = resolve(ROOT, 'src/server/generated/assets.ts')
+
+/**
+ * 构建期注入的 Release tag。
+ *
+ * 本地手动构建不传 `STARM_RELEASE`，产物里就没有发布标识（关于页会显示
+ * 当前为手动构建、检查更新仍可比较版本号，但无法区分同版本的不同构建）。
+ */
+const RELEASE_TAG = (process.env['STARM_RELEASE'] ?? '').trim()
+if (RELEASE_TAG && !parseReleaseTag(RELEASE_TAG)) {
+  console.error(
+    `\n[build] STARM_RELEASE 取值非法：${RELEASE_TAG}\n  形如 v0.1.0-5（与 Release tag 一致）\n`,
+  )
+  process.exit(1)
+}
+if (RELEASE_TAG) {
+  const tagged = parseReleaseTag(RELEASE_TAG)
+  if (tagged && tagged.version !== APP_VERSION) {
+    console.warn(
+      `[build] 注意：STARM_RELEASE 的版本段（${tagged.version}）与 package.json（${APP_VERSION}）不一致\n`,
+    )
+  }
+}
 
 function hostTarget(): string {
   const os =
@@ -60,14 +91,20 @@ if (invalid.length > 0) {
 mkdirSync(OUT_DIR, { recursive: true })
 
 console.log(`[build] 入口：${basename(ENTRY)}`)
+console.log(`[build] 版本：v${APP_VERSION}${RELEASE_TAG ? `（发布标识 ${RELEASE_TAG}）` : ''}`)
 console.log(`[build] 目标：${list.join(', ')}\n`)
+
+/** 注入到产物里的编译期常量（见 src/shared/version.ts 的 RELEASE_TAG） */
+const defineArgs = RELEASE_TAG
+  ? ['--define', `__STARM_RELEASE__:${JSON.stringify(RELEASE_TAG)}`]
+  : []
 
 let failed = 0
 
 for (const target of list) {
   const suffix = target.replace(/^bun-/, '')
   const ext = target.includes('windows') ? '.exe' : ''
-  const outfile = resolve(OUT_DIR, `starm-panel-${suffix}${ext}`)
+  const outfile = resolve(OUT_DIR, `starm-panel-v${APP_VERSION}-${suffix}${ext}`)
 
   console.log(`→ ${target}`)
   const started = Date.now()
@@ -80,6 +117,7 @@ for (const target of list) {
       'build',
       '--compile',
       '--minify',
+      ...defineArgs,
       `--target=${target}`,
       '--outfile',
       outfile,

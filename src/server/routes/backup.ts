@@ -24,8 +24,8 @@ import { monitor } from '../services/monitor'
 import { jsonBody } from '../middleware/validate'
 import { HttpError } from '../middleware/error'
 import { readAssetBytes, storeAsset } from '../services/assets'
+import { APP_VERSION as VERSION } from '@shared/version'
 
-const VERSION = '0.1.0'
 const FORMAT = 'starm-panel-backup'
 
 const BackupSchema = z.object({

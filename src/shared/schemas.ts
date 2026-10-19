@@ -224,3 +224,13 @@ export const AuthPasswordChangeSchema = z.object({
 export const FaviconRequestSchema = z.object({
   url: z.string().trim().min(1).max(2048),
 })
+
+/**
+ * 应用更新。
+ *
+ * tag 必须是 `GET /api/update/check` 返回的那个 Release ——
+ * 服务端会再核一遍，不接受客户端指定任意下载目标。
+ */
+export const UpdateApplySchema = z.object({
+  tag: z.string().trim().min(1).max(64),
+})

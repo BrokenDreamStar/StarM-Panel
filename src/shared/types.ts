@@ -115,6 +115,72 @@ export interface AuthState {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 软件更新（从 GitHub Releases 拉取）
+// ─────────────────────────────────────────────────────────────
+
+/** 最新一次 Release 的基本信息（不含下载地址，外链只留在服务端） */
+export interface UpdateReleaseInfo {
+  tag: string
+  version: string
+  name: string
+  /** ISO 8601 字符串，未发布时为 null */
+  publishedAt: string | null
+  /** Release 页面地址，前端只用来开「发布说明」 */
+  htmlUrl: string
+  /** 当前平台安装包的文件名与大小；该 Release 没有对应包时为 null */
+  assetName: string | null
+  assetSize: number | null
+}
+
+/** `GET /api/update/check` 的响应 */
+export interface UpdateCheckResult {
+  current: {
+    version: string
+    /** 构建期注入的 Release tag；开发模式 / 手写构建为 null */
+    release: string | null
+    /** 形如 `linux-x64`，与 Release 资产后缀一致 */
+    platform: string
+    /** 只有单文件产物才能自更新 —— 开发模式恒为 false */
+    supported: boolean
+  }
+  latest: UpdateReleaseInfo | null
+  hasUpdate: boolean
+  /**
+   * 本次检查走的是哪条路径：
+   *   manifest = Release 里的 latest.json（带 sha256 校验）
+   *   web = 清单缺失 / 不可用时改用的网页检查（无 digest，仅校验大小与文件格式）
+   *   null = 尚未检查（开发模式 / 检查失败）
+   */
+  source: 'manifest' | 'web' | null
+  /** 检查失败原因（断网 / 限流 / 仓库无发布 / 无对应平台包）；正常为 null */
+  error: string | null
+  /** Unix 毫秒 */
+  checkedAt: number
+}
+
+export type UpdatePhase =
+  | 'idle'
+  | 'downloading'
+  | 'verifying'
+  | 'installing'
+  | 'restarting'
+  | 'error'
+
+/** `GET /api/update/status` 的响应 */
+export interface UpdateState {
+  phase: UpdatePhase
+  /** 正在更新到的 Release tag */
+  tag: string | null
+  /** 已下载字节数 */
+  received: number
+  /** 总字节数（服务端未给 content-length 时为 null） */
+  total: number | null
+  error: string | null
+  /** Unix 毫秒 */
+  startedAt: number | null
+}
+
+// ─────────────────────────────────────────────────────────────
 // 系统监控 —— 动态快照
 // ─────────────────────────────────────────────────────────────
 

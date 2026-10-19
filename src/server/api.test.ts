@@ -999,6 +999,41 @@ describe('系统监控接口', () => {
 })
 
 /**
+ * 软件更新接口。
+ *
+ * 测试进程是 `bun index.ts`（不是单文件产物），因此检查接口会直接返回
+ * supported=false 而不联网 —— 这些用例覆盖「开发模式不误触更新」的边界。
+ */
+describe('软件更新', () => {
+  test('开发模式检查更新不联网，返回 supported=false', async () => {
+    const { status, data } = await send('GET', '/api/update/check')
+    expect(status).toBe(200)
+    expect(data.current.supported).toBe(false)
+    expect(data.hasUpdate).toBe(false)
+    expect(data.source).toBeNull()
+    expect(data.current.version).toBeTruthy()
+  })
+
+  test('状态接口初始为 idle', async () => {
+    const { status, data } = await send('GET', '/api/update/status')
+    expect(status).toBe(200)
+    expect(data.phase).toBe('idle')
+    expect(data.tag).toBeNull()
+  })
+
+  test('开发模式应用更新返回 409 UPDATE_UNSUPPORTED', async () => {
+    const { status, data } = await send('POST', '/api/update/apply', { tag: 'v0.1.0-1' })
+    expect(status).toBe(409)
+    expect(data.error.code).toBe('UPDATE_UNSUPPORTED')
+  })
+
+  test('未登录时不能检查更新', async () => {
+    const { status } = await send('GET', '/api/update/check', undefined, { anon: true })
+    expect(status).toBe(401)
+  })
+})
+
+/**
  * 管理员登录（单账号）。
  *
  * ⚠️ 本块**必须留在文件末尾**：最后一个用例会触发按 IP 的登录限流并把

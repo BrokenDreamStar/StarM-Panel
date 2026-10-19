@@ -11,6 +11,16 @@
 import { homedir } from 'node:os'
 import { resolve, join, isAbsolute } from 'node:path'
 
+/** 软件更新（从 GitHub Releases 拉取）的部署侧配置 */
+export interface UpdateConfig {
+  /** GitHub 仓库，形如 owner/name */
+  repo: string
+  /** GitHub 网页根地址（GitHub.com 或 GitHub Enterprise 域名） */
+  base: string
+  /** 下载加速前缀（ghproxy 一类），空串 = 直连 GitHub */
+  mirror: string
+}
+
 export interface ServerConfig {
   port: number
   host: string
@@ -18,7 +28,11 @@ export interface ServerConfig {
   /** 子路径部署前缀，规范化后形如 '' 或 '/panel' */
   basePath: string
   logLevel: 'debug' | 'info' | 'warn' | 'error'
+  update: UpdateConfig
 }
+
+/** 默认的更新源：本项目自己的发布仓库 */
+export const DEFAULT_UPDATE_REPO = 'BrokenDreamStar/StarM-Panel'
 
 const HELP = `
 StarM Panel —— 轻量自托管导航面板
@@ -39,6 +53,9 @@ StarM Panel —— 轻量自托管导航面板
   STARM_PORT / STARM_HOST / STARM_DATA_DIR / STARM_BASE_URL   同上
   STARM_TRUST_PROXY=1    信任反向代理传来的 X-Forwarded-*（限流 IP 与 Secure Cookie）
   STARM_SECURE_COOKIE=1  强制会话 Cookie 带 Secure（反代终结 TLS 时用）
+  STARM_UPDATE_REPO     检查更新的 GitHub 仓库（默认 ${DEFAULT_UPDATE_REPO}）
+  STARM_UPDATE_BASE     GitHub 地址（默认 https://github.com；Enterprise 填自己的域名）
+  STARM_UPDATE_MIRROR   安装包下载加速前缀，例如 https://ghproxy.example.com/
 `.trim()
 
 interface ParsedArgs {
@@ -115,6 +132,22 @@ export function normalizeBasePath(raw: string | undefined): string {
   return p.replace(/\/+$/, '')
 }
 
+/**
+ * 读取更新源配置。
+ *
+ * 非法值不在启动期抛错：面板的主职是导航首页，不能因为一个可选功能的
+ * 环境变量写错就起不来。检查更新时再返回可读的错误提示（见 services/update.ts）。
+ */
+export function resolveUpdateConfig(): UpdateConfig {
+  const mirror = (process.env['STARM_UPDATE_MIRROR'] ?? '').trim()
+  return {
+    repo: (process.env['STARM_UPDATE_REPO'] ?? DEFAULT_UPDATE_REPO).trim(),
+    base: (process.env['STARM_UPDATE_BASE'] ?? 'https://github.com').trim().replace(/\/+$/, ''),
+    // 统一补尾斜杠：下载地址 = 镜像前缀 + GitHub 原始完整 URL
+    mirror: mirror === '' ? '' : mirror.endsWith('/') ? mirror : `${mirror}/`,
+  }
+}
+
 export function resolveConfig(argv: string[] = process.argv.slice(2)): {
   config: ServerConfig
   help: boolean
@@ -127,10 +160,13 @@ export function resolveConfig(argv: string[] = process.argv.slice(2)): {
 
   const config: ServerConfig = {
     port: args.port ?? Number(process.env['STARM_PORT'] ?? 3002),
-    host: args.host ?? process.env['STARM_HOST'] ?? '0.0.0.0',
+    // 空串按「未设置」处理：容器 / 服务模板里常写 STARM_HOST=，
+    // 空 hostname 会让 Bun 绑定 IPv6 通配地址而不是默认的 0.0.0.0
+    host: (args.host ?? process.env['STARM_HOST'] ?? '').trim() || '0.0.0.0',
     dataDir: isAbsolute(dataDirRaw) ? dataDirRaw : resolve(process.cwd(), dataDirRaw),
     basePath: normalizeBasePath(args.basePath ?? process.env['STARM_BASE_URL']),
     logLevel: args.logLevel ?? 'info',
+    update: resolveUpdateConfig(),
   }
 
   return {
