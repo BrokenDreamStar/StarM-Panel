@@ -12,7 +12,7 @@
 前往 [Releases](https://github.com/BrokenDreamStar/StarM-Panel/releases/latest) 页面，下载对应平台可执行文件或
 
 ```bash
-curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.2-linux-x64
+curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.4-linux-x64
 ```
 
 ## 启动
@@ -22,23 +22,23 @@ curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/downloa
 ### Linux
 
 ```bash
-chmod +x starm-panel-v0.1.2-linux-x64
-./starm-panel-v0.1.2-linux-x64
+chmod +x starm-panel-v0.1.4-linux-x64
+./starm-panel-v0.1.4-linux-x64
 ```
 
 ### macOS
 
 ```bash
-chmod +x starm-panel-v0.1.2-darwin-arm64
-./starm-panel-v0.1.2-darwin-arm64
+chmod +x starm-panel-v0.1.4-darwin-arm64
+./starm-panel-v0.1.4-darwin-arm64
 ```
 
 ### Windows
 
-双击 `starm-panel-v0.1.2-windows-x64.exe`，或在 PowerShell 中运行：
+双击 `starm-panel-v0.1.4-windows-x64.exe`，或在 PowerShell 中运行：
 
 ```powershell
-.\starm-panel-v0.1.2-windows-x64.exe
+.\starm-panel-v0.1.4-windows-x64.exe
 ```
 
 ### 打开面板
@@ -46,7 +46,7 @@ chmod +x starm-panel-v0.1.2-darwin-arm64
 启动后终端会打印监听地址：
 
 ```
-  StarM Panel v0.1.2
+  StarM Panel v0.1.4
   ────────────────────────────────────────
   监听    0.0.0.0:3002
   访问    http://localhost:3002
@@ -55,7 +55,7 @@ chmod +x starm-panel-v0.1.2-darwin-arm64
 
 浏览器打开 **http://localhost:3002** 或同一局域网内的其它设备访问 `http://<这台机器的 IP>:3002`
 
-> **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.2-darwin-arm64`。
+> **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.4-darwin-arm64`。
 >
 > **Windows**：若弹出「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
 

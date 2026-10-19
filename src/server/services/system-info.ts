@@ -36,6 +36,35 @@ function round1(v: number): number {
 }
 
 /**
+ * 内存「已用」的统一定义：**总量 − 可用量**（= 活动监视器的「已使用内存」/
+ * htop 的 used / 任务管理器的「使用中」）。
+ *
+ * `si.mem().used` **不能直接用**：它在 Linux 与 macOS 上算的是「总量 − 完全空闲」，
+ * 把内核随时能回收的 page cache（Linux 的 buff/cache、macOS 的 inactive）也算成占用：
+ *
+ *   - macOS 实测：si 报 15.6/16.0 GB（97.5%，红条），活动监视器「已使用内存」12.4 GB；
+ *   - Debian 实测：4 GB 机器上 si 报 3.8 GB 已用（95%），实际 available 还有 1.85 GB。
+ *
+ * 平台的 `available` 语义正好对齐：
+ *   - Linux = `MemAvailable`（含可回收的 buff/cache）；
+ *   - macOS = 空闲 + inactive（`si.mem().active` 就是活动监视器那个「已使用」，与
+ *     total − available 等价）；
+ *   - Windows = `os.freemem()`（`ullAvailPhys`，已含 standby），与原来的 used 一致。
+ *
+ * 取不到合理的 available 时退回「总量 − 空闲」，宁可延续旧行为也不给出 0。
+ * 导出仅供单测使用。
+ */
+export function usedMemory(m: { total: number; free: number; available: number }): number {
+  const total = validNumber(m.total) ?? 0
+  if (total <= 0) return 0
+
+  const available = validNumber(m.available)
+  if (available !== null && available > 0 && available < total) return total - available
+
+  return Math.max(0, total - (validNumber(m.free) ?? 0))
+}
+
+/**
  * 采集超时预算（毫秒）。
  *
  * 「采集失败」不止是抛异常：系统调用卡死时 `si.*` 会一直 pending，既不 resolve
@@ -110,6 +139,47 @@ export async function safe<T>(
     onFailure?.()
     return fallback
   }
+}
+
+/**
+ * 慢变指标的刷新周期（ms）—— 落实 docs/DESIGN.md §7.1 的「30s」一列。
+ *
+ * `si.fsSize()`（内部 spawn `mount` + `df`）、`si.processes()`（spawn `ps`，再
+ * 对每个 pid `cat /proc/<pid>/stat`）、`si.users()`（spawn `who`）都是**进程级**
+ * 开销，而它们给出的容量 / 进程数 / 登录用户本来就是按分钟变化的量。
+ *
+ * 曾经这三项跟着 1s 主循环跑，单轮要 fork 六七个进程；在内存吃紧的 2 核机器上
+ * （实测 Debian + 95% 内存 + 2GB swap），一轮采样被拖到 ~1.9s，直接把下面
+ * 「CPU 使用率的测量窗口」压到 0.1s 量级 —— 于是 CPU 卡片在 8% / 60% 之间
+ * 来回跳，而内存、磁盘、网络这些**电平量**纹丝不动（它们不依赖窗口长度）。
+ */
+const SLOW_METRIC_TTL_MS = 30_000
+
+/** 慢变指标的上一次成功采集结果 */
+const slowMetrics = new Map<string, { at: number; value: unknown }>()
+
+/**
+ * 带 TTL 的采集：命中缓存直接返回，过期才真正采。
+ *
+ * 降级结果（超时 / 抛异常）**不进缓存** —— 否则一次卡顿会让「进程数 / 磁盘容量」
+ * 整整 30s 都是空值，和 `getStaticInfo()` 里那条「失败不入缓存」是同一个理由。
+ * 导出仅供单测使用。
+ */
+export async function cachedCollect<T>(
+  key: string,
+  ttlMs: number,
+  fn: () => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  const hit = slowMetrics.get(key) as { at: number; value: T } | undefined
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value
+
+  let failed = false
+  const value = await safe(fn, fallback, COLLECTOR_TIMEOUTS.sample, key, () => {
+    failed = true
+  })
+  if (!failed) slowMetrics.set(key, { at: Date.now(), value })
+  return value
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -512,6 +582,107 @@ export async function getStaticInfo(force = false): Promise<SystemStaticInfo> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// CPU 使用率：自己维护测量窗口
+//
+// 为什么不用 `si.currentLoad()`（见 docs/DESIGN.md §7.3「CPU 使用率的测量窗口」）：
+//
+//   1. 它返回的是**距离上一次调用**的平均使用率，窗口长度完全由调用节奏决定。
+//      采样轮次一旦抖动（实测慢轮 1.9s、紧跟的补发轮 0.12s），同一台空闲机器就会
+//      读出一串「8% / 60%」交替的方波 —— 60% 那一格量的其实是这一轮采集自己的开销。
+//   2. 它在 Linux 上每次都要 `execSync('cat /proc/stat | grep cpu')`，
+//      一轮多出 3 个进程，还**同步阻塞事件循环**。
+//
+// `os.cpus()` 每次调用都直接读 /proc/stat（Linux）或 host_processor_info（macOS），
+// 零 fork；累计 tick 由我们自己差分，于是「度量窗口」与「采样节奏」解耦：
+// 窗口不足 `minWindowMs` 就沿用上一次的值，且**不推进基线**，让下一轮把这段
+// 窗口补回来。
+// ─────────────────────────────────────────────────────────────
+
+/** CPU 累计计数器的一次读数 */
+export interface CpuTimes {
+  /** 读计数器的时刻（ms）—— 窗口按「读的时刻」算，与单轮采集耗时无关 */
+  at: number
+  perCore: Array<{ idle: number; total: number }>
+}
+
+export interface CpuUsage {
+  /** 全部核心合计使用率 0-100 */
+  usage: number
+  /** 每核心使用率 0-100 */
+  perCore: number[]
+}
+
+/** 默认最小测量窗口：1s 采样间隔下即便慢轮抖动也不会把窗口压到 0.1s 量级 */
+export const DEFAULT_MIN_CPU_WINDOW_MS = 800
+
+function clampPct(v: number): number {
+  if (!Number.isFinite(v)) return 0
+  return Math.min(100, Math.max(0, v))
+}
+
+/** 读取一次 CPU 累计 tick（user/nice/sys/irq/idle 之和） */
+export function readCpuTimes(at: number = Date.now()): CpuTimes {
+  const cpus = os.cpus()
+  return {
+    at,
+    perCore: cpus.map((c) => {
+      const t = c.times as Partial<typeof c.times>
+      const idle = t.idle ?? 0
+      return {
+        idle,
+        total: idle + (t.user ?? 0) + (t.nice ?? 0) + (t.sys ?? 0) + (t.irq ?? 0),
+      }
+    }),
+  }
+}
+
+/**
+ * 由累计计数器的两次读数算出使用率。
+ *
+ * - 首次采样、核心数变化（CPU 热插拔）：只记基线，本轮沿用上次的值；
+ * - 窗口 < `minWindowMs`：**不动基线**、沿用上次的值 —— 短窗口里那点数据不是
+ *   丢弃，而是并进下一轮的窗口里；
+ * - 计数器没走动（窗口内没有 tick）：沿用上次的值，但推进基线，避免窗口无限增长。
+ *
+ * 导出仅供单测使用。
+ */
+export function computeCpuUsage(
+  prev: CpuTimes | null,
+  curr: CpuTimes,
+  last: CpuUsage | null,
+  minWindowMs: number = DEFAULT_MIN_CPU_WINDOW_MS,
+): { value: CpuUsage; baseline: CpuTimes } {
+  const carried: CpuUsage = last ?? { usage: 0, perCore: [] }
+  const keep = { value: carried, baseline: prev ?? curr }
+
+  if (!prev || prev.perCore.length !== curr.perCore.length) {
+    // 没有基线（冷启动 / 刚重启），或核心数变了：新一轮基线从此刻算起
+    return { value: carried, baseline: curr }
+  }
+  if (curr.at - prev.at < minWindowMs) return keep
+
+  let sumIdle = 0
+  let sumTotal = 0
+  const perCore: number[] = []
+  for (let i = 0; i < curr.perCore.length; i++) {
+    const dIdle = curr.perCore[i]!.idle - prev.perCore[i]!.idle
+    const dTotal = curr.perCore[i]!.total - prev.perCore[i]!.total
+    // 计数器回绕 / 复位时差值为负，按 0 处理，宁可低估也不给出 >100%
+    sumIdle += Math.max(0, dIdle)
+    sumTotal += Math.max(0, dTotal)
+    const load = dTotal > 0 ? (1 - dIdle / dTotal) * 100 : null
+    perCore.push(load === null ? (carried.perCore[i] ?? 0) : round1(clampPct(load)))
+  }
+
+  if (sumTotal <= 0) return { value: carried, baseline: curr }
+
+  return {
+    value: { usage: round1(clampPct((1 - sumIdle / sumTotal) * 100)), perCore },
+    baseline: curr,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // 动态快照
 // ─────────────────────────────────────────────────────────────
 
@@ -519,10 +690,22 @@ export interface CollectorState {
   at: number
   net: Map<string, { rx: number; tx: number }>
   disk: Map<string, DiskCounters>
+  /** 上一轮的 CPU 计数器基线（见 computeCpuUsage） */
+  cpu: CpuTimes | null
+  /** 上一轮报出去的 CPU 使用率，窗口过短时沿用它 */
+  cpuUsage: CpuUsage | null
 }
 
 export function createCollectorState(): CollectorState {
-  return { at: 0, net: new Map(), disk: new Map() }
+  return { at: 0, net: new Map(), disk: new Map(), cpu: null, cpuUsage: null }
+}
+
+export interface CollectSnapshotOptions {
+  /**
+   * CPU 使用率的最小测量窗口（ms）。调用方按采样间隔给（通常 0.8 × 间隔），
+   * 这样窗口永远不会短于「一轮本来就该有的间隔」。
+   */
+  minCpuWindowMs?: number
 }
 
 /**
@@ -531,40 +714,50 @@ export function createCollectorState(): CollectorState {
  * 注意：本函数**不调用 si.graphics()**。GPU 由独立的 GpuSampler 以更低频率
  * 采集（见 docs/DESIGN.md §7.3），避免每秒 spawn nvidia-smi 子进程。
  * GPU 数据由调用方通过 gpus 参数注入。
+ *
+ * 三项慢变指标（磁盘容量 / 进程数 / 用户数）按 `SLOW_METRIC_TTL_MS` 缓存，
+ * CPU 使用率用自己维护的窗口差分 —— 两者都是为了不让「采集本身的开销」
+ * 污染「采到的数」，详见各段注释。
  */
 export async function collectSnapshot(
   prev: CollectorState,
   gpus: GpuSnapshot[],
+  options: CollectSnapshotOptions = {},
 ): Promise<{ snapshot: SystemSnapshot; next: CollectorState }> {
   // 高频采样：3s 内没回来就当该项不可用，避免拖住下一轮
   const collect = <T>(label: string, fn: () => Promise<T>, fallback: T) =>
     safe(fn, fallback, COLLECTOR_TIMEOUTS.sample, label)
 
-  const [load, mem, fsSize, netStats, temp, time, processes, users, diskCounters] =
-    await Promise.all([
-      collect('currentLoad', () => si.currentLoad(), null as Awaited<
-        ReturnType<typeof si.currentLoad>
-      > | null),
-      collect('mem', () => si.mem(), null as Awaited<ReturnType<typeof si.mem>> | null),
-      collect('fsSize', () => si.fsSize(), [] as Awaited<ReturnType<typeof si.fsSize>>),
-      collect('networkStats', () => si.networkStats(), [] as Awaited<
-        ReturnType<typeof si.networkStats>
-      >),
-      collect('cpuTemperature', () => si.cpuTemperature(), { main: -1 } as Awaited<
-        ReturnType<typeof si.cpuTemperature>
-      >),
-      // si.time() 是 systeminformation 中少数几个**同步** API，包一层 async 以复用 safe()
-      collect(
-        'time',
-        async () => si.time(),
-        { current: 0, uptime: 0, timezone: '', timezoneName: '' },
-      ),
-      collect('processes', () => si.processes(), { all: 0 } as Awaited<
-        ReturnType<typeof si.processes>
-      >),
-      collect('users', () => si.users(), [] as unknown[]),
-      readDiskCounters(),
-    ])
+  // CPU 计数器在**派发采集之前**读：窗口就是「上一次读」到「这一次读」，
+  // 与单轮采集耗时无关（慢轮不会把窗口拉长或缩短）
+  const cpuAt = Date.now()
+  const cpuTimes = readCpuTimes(cpuAt)
+
+  // 慢变指标（容量 / 进程数 / 用户数）按 30s 刷新，见 SLOW_METRIC_TTL_MS
+  const [mem, fsSize, netStats, temp, time, processes, users, diskCounters] = await Promise.all([
+    collect('mem', () => si.mem(), null as Awaited<ReturnType<typeof si.mem>> | null),
+    cachedCollect('fsSize', SLOW_METRIC_TTL_MS, () => si.fsSize(), [] as Awaited<
+      ReturnType<typeof si.fsSize>
+    >),
+    collect('networkStats', () => si.networkStats(), [] as Awaited<
+      ReturnType<typeof si.networkStats>
+    >),
+    collect('cpuTemperature', () => si.cpuTemperature(), { main: -1 } as Awaited<
+      ReturnType<typeof si.cpuTemperature>
+    >),
+    // si.time() 是 systeminformation 中少数几个**同步** API，包一层 async 以复用 safe()
+    collect('time', async () => si.time(), {
+      current: 0,
+      uptime: 0,
+      timezone: '',
+      timezoneName: '',
+    }),
+    cachedCollect('processes', SLOW_METRIC_TTL_MS, () => si.processes(), { all: 0 } as Awaited<
+      ReturnType<typeof si.processes>
+    >),
+    cachedCollect('users', SLOW_METRIC_TTL_MS, () => si.users(), [] as unknown[]),
+    readDiskCounters(),
+  ])
 
   const now = Date.now()
   // 首次采样时 prev.at 为 0，差分速率一律为 0
@@ -619,14 +812,22 @@ export async function collectSnapshot(
     }
   })
 
-  // ── 负载均值：si.currentLoad() 只给 1 分钟，5/15 分钟用 node:os ──
+  // ── CPU 使用率：自己维护窗口（见 computeCpuUsage 的注释） ──
+  const cpu = computeCpuUsage(
+    prev.cpu,
+    cpuTimes,
+    prev.cpuUsage,
+    options.minCpuWindowMs ?? DEFAULT_MIN_CPU_WINDOW_MS,
+  )
+
+  // ── 负载均值：1/5/15 分钟都由 node:os 提供（si 的 loadavg 同样来自这里） ──
   const [l1, l5, l15] = os.loadavg()
 
   const snapshot: SystemSnapshot = {
     ts: now,
     cpu: {
-      usage: round1(load?.currentLoad ?? 0),
-      perCore: (load?.cpus ?? []).map((c) => round1(c.load)),
+      usage: cpu.value.usage,
+      perCore: cpu.value.perCore,
       load: [
         Math.round(l1 * 100) / 100,
         Math.round(l5 * 100) / 100,
@@ -638,7 +839,8 @@ export async function collectSnapshot(
     },
     mem: {
       total: mem?.total ?? 0,
-      used: mem?.used ?? 0,
+      // 不能用 si.mem().used —— 见 usedMemory() 的说明
+      used: mem ? usedMemory(mem) : 0,
       free: mem?.free ?? 0,
       available: mem?.available ?? 0,
       swapTotal: mem?.swaptotal ?? 0,
@@ -654,5 +856,14 @@ export async function collectSnapshot(
     },
   }
 
-  return { snapshot, next: { at: now, net: nextNet, disk: nextDisk } }
+  return {
+    snapshot,
+    next: {
+      at: now,
+      net: nextNet,
+      disk: nextDisk,
+      cpu: cpu.baseline,
+      cpuUsage: cpu.value,
+    },
+  }
 }

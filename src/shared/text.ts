@@ -733,7 +733,8 @@ export const TEXT = {
 		 * 软件更新（从 GitHub Releases 拉取）。
 		 *
 		 * 「当前 / 最新版本」的取值、进度百分比都由组件算好后传进来，
-		 * 这里只负责措辞；服务端返回的原始错误信息由调用方拼进这些模板。
+		 * 这里只负责措辞。更新失败（failed）会带上服务端原始报错；
+		 * 检查失败只用固定文案，原因留给服务端日志，不往界面上堆。
 		 */
 		update: {
 			title: '软件更新',
@@ -759,7 +760,8 @@ export const TEXT = {
 			},
 			/** 下载量：已下载 / 总量（单位由 utils/format 统一换算） */
 			progress: (received: string, total: string) => `${received} / ${total}`,
-			checkFailed: (message: string) => `检查更新失败：${message}`,
+			/** 只报「失败」，不展示错误原因：这是给用户看的，不是给开发者看的 */
+			checkFailed: '检查更新失败',
 			/** 走了网页备用路径：说明为什么校验方式比 API 弱一点 */
 			webHint: '更新清单不可用，已自动改用网页方式检查；下载后仍会校验文件大小与格式。',
 			failed: (message: string) => (message ? `更新失败：${message}` : '更新失败'),

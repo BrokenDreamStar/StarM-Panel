@@ -266,8 +266,11 @@ export interface SystemSnapshot {
 
   mem: {
     total: number
+    /** total − available：与活动监视器 / htop / 任务管理器的「使用中」一致 */
     used: number
+    /** 完全空闲（不含可回收的 page cache） */
     free: number
+    /** 可立即分配的量（含可回收缓存），used 由它决定 */
     available: number
     swapTotal: number
     swapUsed: number
