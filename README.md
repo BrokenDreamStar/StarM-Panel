@@ -26,6 +26,7 @@ tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
 ### Linux
 
 ```bash
+tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
 chmod +x starm-panel-v0.1.5-linux-x64
 ./starm-panel-v0.1.5-linux-x64
 ```
