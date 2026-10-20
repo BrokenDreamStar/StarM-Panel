@@ -1,0 +1,74 @@
+# 持续集成：PR 与分支推送时跑类型检查、单测和一次编译冒烟。
+#
+# 与发布工作流（release.yml）的分工：
+#   - 这里只「验证代码」，不产出任何 Release 资产，所以 PR 到 dev / main 都跑；
+#   - 发版只由「推送 tag」触发（见 release.yml）。代码合进 main 不等于发版，
+#     因此往 main 合并不会白跑六平台编译，发版是显式动作：bun run release:tag。
+#
+# 单测里有拉起真实服务器的用例（api.test.ts），它依赖 dist/ 与
+# src/server/generated/assets.ts，所以顺序必须是「先构建前端、再生成清单、最后跑测试」。
+name: 持续集成
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+
+# 同一分支的新推送取消上一次没跑完的检查（PR 与 push 各自独立）
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 与发布工作流、本地开发保持一致
+  BUN_VERSION: 1.4.2
+
+jobs:
+  check:
+    name: 类型检查与单测
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 缓存依赖
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - name: 安装依赖
+        run: bun install --frozen-lockfile
+
+      - name: 构建前端（单测依赖 dist 产物）
+        run: bun run build:web
+
+      - name: 生成资源嵌入清单
+        run: bun run build:assets
+
+      - name: 类型检查
+        run: bun run typecheck
+
+      - name: 单元测试
+        run: bun test
+
+      # 单测跑的是源码；`bun build --compile` 才会真正解析 assets.ts 里的
+      # `with { type: 'file' }` 导入。编译期问题在这里暴露，而不是等发版时才发现。
+      - name: 编译冒烟（本机目标）
+        run: bun run build:bin
+
+      # 发布前的最后一道校验放到 PR 上做：版本号与 CHANGELOG 对不上时，
+      # 发布工作流的 prepare 阶段会直接失败，不如在合并前就拦住。
+      - name: 校验 CHANGELOG 段落（PR 到 main）
+        if: github.base_ref == 'main'
+        run: bun run scripts/release-notes.ts "$(node -p 'require("./package.json").version')" > /dev/null
