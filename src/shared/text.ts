@@ -119,8 +119,9 @@ export const TEXT = {
 		networkModeSwitched: (mode: string) => `网络模式：${mode}`,
 		/** 应用卡片区的分区标题 */
 		appsSection: 'APP',
-		/** 页脚两行 */
-		footerPowered: 'Powered By StarM Panel',
+		/** 页脚两行；品牌名单独成项，模板里把它包成指向仓库的链接 */
+		footerPowered: 'Powered By',
+		footerBrand: 'StarM Panel',
 		footerCopyright: 'Copyright ©2021-2026 StarM Team',
 	},
 

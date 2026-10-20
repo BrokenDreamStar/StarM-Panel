@@ -10,6 +10,7 @@
  */
 import { homedir } from 'node:os'
 import { resolve, join, isAbsolute } from 'node:path'
+import { PROJECT_REPO_SLUG } from '@shared/links'
 
 /** 软件更新（从 GitHub Releases 拉取）的部署侧配置 */
 export interface UpdateConfig {
@@ -31,8 +32,8 @@ export interface ServerConfig {
   update: UpdateConfig
 }
 
-/** 默认的更新源：本项目自己的发布仓库 */
-export const DEFAULT_UPDATE_REPO = 'BrokenDreamStar/StarM-Panel'
+/** 默认的更新源：本项目自己的发布仓库（与页脚的仓库链接共用同一份标识） */
+export const DEFAULT_UPDATE_REPO = PROJECT_REPO_SLUG
 
 const HELP = `
 StarM Panel —— 轻量自托管导航面板
