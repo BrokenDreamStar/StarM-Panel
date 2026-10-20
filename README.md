@@ -9,12 +9,10 @@
 
 ## 下载
 
-前往 [Releases](https://github.com/BrokenDreamStar/StarM-Panel/releases/latest) 页面下载对应平台的归档：
-**macOS / Linux 是 `.tar.gz`，Windows 是 `.zip`**。归档里只有一个可执行文件，解开即可运行。
-面板的「检查更新」也走同一份归档，会自动替换程序本身。
+前往 [Releases](https://github.com/BrokenDreamStar/StarM-Panel/releases/latest) 页面下载对应平台的压缩包，或用下面的命令直接下载：
 
 ```bash
-# Linux x64（arm64 把文件名里的 x64 换成 arm64）
+# Linux x64
 curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.5-linux-x64.tar.gz
 tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
 ```
@@ -62,6 +60,8 @@ chmod +x starm-panel-v0.1.5-darwin-arm64
 浏览器打开 **http://localhost:3002** 或同一局域网内的其它设备访问 `http://<这台机器的 IP>:3002`
 
 > **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.5-darwin-arm64`。
+>
+> **Linux**：若提示权限不足，可尝试 `chmod +x starm-panel-v0.1.5-linux-x64`。
 >
 > **Windows**：若弹出「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
 
