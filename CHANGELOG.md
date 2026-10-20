@@ -4,6 +4,10 @@
 取对应的 `## <version>` 段落（到下一个二级标题为止），作为 GitHub Release
 的说明；发版前先在这里补一段。
 
+## 0.1.6
+
+- 页脚「Powered By StarM Panel」可点击，跳转到项目仓库。
+
 ## 0.1.5
 
 - 重构了分发和更新包架构：macOS / Linux 使用 `.tar.gz`，Windows 使用 `.zip`，以缩小体积

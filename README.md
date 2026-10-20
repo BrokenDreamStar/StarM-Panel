@@ -13,8 +13,8 @@
 
 ```bash
 # Linux x64
-curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.5-linux-x64.tar.gz
-tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
+curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.6-linux-x64.tar.gz
+tar xzf starm-panel-v0.1.6-linux-x64.tar.gz
 ```
 
 ## 启动
@@ -24,25 +24,25 @@ tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
 ### Linux
 
 ```bash
-tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
-chmod +x starm-panel-v0.1.5-linux-x64
-./starm-panel-v0.1.5-linux-x64
+tar xzf starm-panel-v0.1.6-linux-x64.tar.gz
+chmod +x starm-panel-v0.1.6-linux-x64
+./starm-panel-v0.1.6-linux-x64
 ```
 
 ### macOS
 
 ```bash
-tar xzf starm-panel-v0.1.5-darwin-arm64.tar.gz
-chmod +x starm-panel-v0.1.5-darwin-arm64
-./starm-panel-v0.1.5-darwin-arm64
+tar xzf starm-panel-v0.1.6-darwin-arm64.tar.gz
+chmod +x starm-panel-v0.1.6-darwin-arm64
+./starm-panel-v0.1.6-darwin-arm64
 ```
 
 ### Windows
 
-解压 `starm-panel-v0.1.5-windows-x64.zip`，双击里面的 `starm-panel-v0.1.5-windows-x64.exe`，或在 PowerShell 中运行：
+解压 `starm-panel-v0.1.6-windows-x64.zip`，双击里面的 `starm-panel-v0.1.6-windows-x64.exe`，或在 PowerShell 中运行：
 
 ```powershell
-.\starm-panel-v0.1.5-windows-x64.exe
+.\starm-panel-v0.1.6-windows-x64.exe
 ```
 
 ### 打开面板
@@ -50,7 +50,7 @@ chmod +x starm-panel-v0.1.5-darwin-arm64
 启动后终端会打印监听地址：
 
 ```
-  StarM Panel v0.1.5
+  StarM Panel v0.1.6
   ────────────────────────────────────────
   监听    0.0.0.0:3002
   访问    http://localhost:3002
@@ -59,9 +59,9 @@ chmod +x starm-panel-v0.1.5-darwin-arm64
 
 浏览器打开 **http://localhost:3002** 或同一局域网内的其它设备访问 `http://<这台机器的 IP>:3002`
 
-> **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.5-darwin-arm64`。
+> **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.6-darwin-arm64`。
 >
-> **Linux**：若提示权限不足，可尝试 `chmod +x starm-panel-v0.1.5-linux-x64`。
+> **Linux**：若提示权限不足，可尝试 `chmod +x starm-panel-v0.1.6-linux-x64`。
 >
 > **Windows**：若弹出「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
 
