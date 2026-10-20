@@ -1,57 +1,48 @@
 /**
- * 计算本次发布应当使用的 tag（发布工作流在 prepare 阶段调用一次）。
+ * 校验发布 tag 与 package.json 版本号是否一致（release.yml 的 prepare 阶段调用）。
  *
- * 规则（与 src/shared/update.ts 的 nextReleaseTag 同一份实现）：
- *   - 每个版本的**第一次**发布不带序号：v0.1.1
- *   - 同一版本重复发布才追加序号：v0.1.1-2、v0.1.1-3 …
- *   - 是否发过以仓库里已有的 tag 为准，因此调用前必须能看到远程 tag
+ * 用法：
+ *   bun run scripts/release-tag.ts v0.1.5     # 通过：版本号就是 0.1.5
+ *   bun run scripts/release-tag.ts v0.1.5-2   # 通过：同一版本重复发布
+ *   bun run scripts/release-tag.ts v0.1.6     # 失败：package.json 还是 0.1.5
  *
- * 用法（工作流里）：
- *   git fetch --tags --force
- *   bun run scripts/release-tag.ts 0.1.1 >> "$GITHUB_OUTPUT"
+ * 为什么要在编译前校验：产物文件名、`--version`、`/healthz`、检查更新读的都是
+ * package.json 的版本，Release 的 tag 却来自人工推送。两边对不上时用户会看到
+ * 「v0.1.6 的发布，装进去的是 0.1.5」，而检查更新会一直提示有新版本。
  *
- * stdout 只输出一行 `tag=v0.1.1`（GITHUB_OUTPUT 的格式），
- * 说明信息一律走 stderr，避免把日志写进 GitHub Actions 的输出变量。
+ * 打 tag 本身由 scripts/tag-release.ts 负责（它会先做同样的检查再推 tag）。
  */
-import { nextReleaseTag, parseReleaseTag } from '../src/shared/update'
+import { version } from '../package.json'
+import { parseReleaseTag } from '../src/shared/update'
 
-const VERSION = process.argv.slice(2).find((arg) => !arg.startsWith('-'))?.trim() ?? ''
+const tag = process.argv.slice(2).find((arg) => !arg.startsWith('-'))?.trim() ?? ''
 
-if (!VERSION) {
-  console.error('\n[release-tag] 用法：bun run scripts/release-tag.ts <version>\n')
+function fail(message: string): never {
+  console.error(`\n[release-tag] ${message}\n`)
   process.exit(1)
 }
 
-const listed = Bun.spawnSync({
-  cmd: ['git', 'tag', '--list'],
-  stdout: 'pipe',
-  stderr: 'pipe',
-})
+if (!tag) fail('用法：bun run scripts/release-tag.ts <tag>（如 v0.1.5 / v0.1.5-2）')
 
-if (listed.exitCode !== 0) {
-  console.error(
-    `\n[release-tag] 读取 git tag 失败：${listed.stderr.toString().trim() || `退出码 ${listed.exitCode}`}\n` +
-      '  CI 里请先执行 git fetch --tags --force\n',
-  )
-  process.exit(1)
-}
-
-const tags = listed.stdout
-  .toString()
-  .split('\n')
-  .map((line) => line.trim())
-  .filter(Boolean)
-
-const tag = nextReleaseTag(VERSION, tags)
-if (!tag) {
-  console.error(`\n[release-tag] 版本号非法：${VERSION}（应形如 0.1.1）\n`)
-  process.exit(1)
-}
+// 发布工作流只由 `v*` 的 tag 触发，别的写法（1.2.3、release-1.2.3）会静默不发版
+if (!tag.startsWith('v')) fail(`tag 必须以 v 开头：${tag}`)
 
 const parsed = parseReleaseTag(tag)
-const released = tags.filter((t) => parseReleaseTag(t)?.version === parsed?.version).length
-console.error(
-  `[release-tag] 版本 ${parsed?.version ?? VERSION} 已有 ${released} 个发布 tag，本次使用 ${tag}`,
-)
+if (!parsed) fail(`tag 非法：${tag}（应形如 v0.1.5 或 v0.1.5-2）`)
 
-console.log(`tag=${tag}`)
+const repoVersion = parseReleaseTag(`v${version}`)?.version
+if (!repoVersion) fail(`package.json 的版本号非法：${version}`)
+
+if (parsed.version !== repoVersion) {
+  fail(
+    `tag ${tag} 与 package.json 版本 ${repoVersion} 不一致：\n` +
+      `  - 发新版本：把 package.json 与 CHANGELOG.md 改到 ${parsed.version} 后重新打 tag\n` +
+      `  - 同版本重发：tag 用 v${repoVersion}-2（序号接着已有 tag 往后排）`,
+  )
+}
+
+// 说明信息一律走 stderr，stdout 留给调用方可能接的后续脚本
+console.error(
+  `[release-tag] ${tag} ↔ package.json ${repoVersion} ✓` +
+    (parsed.build === null ? '' : `（重复发布序号 ${parsed.build}）`),
+)

@@ -19,6 +19,7 @@ import { useItemsStore } from '@/stores/items'
 import { useSettingsStore } from '@/stores/settings'
 import { useNetworkStore } from '@/stores/network'
 import { TEXT as T } from '@shared/text'
+import { PROJECT_REPO_URL } from '@shared/links'
 import type { Group, Item } from '@shared/types'
 import GroupSection from '@/components/GroupSection.vue'
 import CardEditor from '@/components/CardEditor.vue'
@@ -151,7 +152,16 @@ onUnmounted(() => {
       </section>
 
       <footer class="powered">
-        <p class="powered-line">{{ T.home.footerPowered }}</p>
+        <!-- 品牌名链到项目仓库：新标签打开，不打断面板上的操作 -->
+        <p class="powered-line">
+          {{ T.home.footerPowered }}
+          <a
+            class="powered-brand"
+            :href="PROJECT_REPO_URL"
+            target="_blank"
+            rel="noopener noreferrer"
+          >{{ T.home.footerBrand }}</a>
+        </p>
         <p class="powered-line">{{ T.home.footerCopyright }}</p>
       </footer>
     </main>
@@ -263,6 +273,24 @@ onUnmounted(() => {
 .powered-line {
   margin: 0;
   line-height: 1.7;
+}
+
+/* 页脚品牌链接：平时与两行文字同色同字重（页脚很淡，不该抢视线），
+   只靠细下划线和悬停 / 键盘聚焦时的强调色表明「这里可以点」。 */
+.powered-brand {
+  margin-left: 0.35em;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.powered-brand:hover,
+.powered-brand:focus-visible {
+  color: var(--accent);
+  border-bottom-color: currentColor;
 }
 
 /* 手机端：32px 的两侧留白会把 390px 的屏挤到只剩 326px（一行放不下两张卡片），

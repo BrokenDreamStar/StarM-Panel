@@ -1,19 +1,22 @@
-# 发布构建：dev 分支的 PR 合并进 main 时，产出 6 个单文件可执行程序并发成 Release。
+# 发布构建：推送版本 tag（v0.1.5 / v0.1.5-2）时，产出 6 个单文件可执行程序并发成 Release。
 #
 # 目标（见 docs/DESIGN.md §2.2 ADR-001：全部依赖纯 JS 或 Bun 内置，故可交叉编译）：
 #   macOS   arm64 / x86_64
 #   Linux   arm64 / x86_64
 #   Windows arm64 / x86_64
 #
-# 触发条件刻意写成「PR 被合并」而不是「push 到 main」：发布只跟着 dev → main 的合并走，
-# 直接往 main 推文档之类的提交不会白跑一次全平台构建。需要在别的分支上手工验证时，
-# 用 workflow_dispatch 选分支手动跑。
+# 触发条件是「推送 tag」而不是「合并 PR」：
+#   - tag 是发布的唯一事实来源：产物里的 STARM_RELEASE、Release tag、下载地址都指向它；
+#   - 构建失败后 Re-run 是安全的 —— 不会再算出一个新 tag（旧做法重跑会得到 v0.1.5-2
+#     和第二个 Release）；tag 存在之后再重跑，只会补齐这次发布；
+#   - 代码进 main 只是「合进主干」，发版是显式动作：bun run release:tag
+#     （scripts/tag-release.ts，只允许在 main 上、工作区干净、CHANGELOG 有本版本段落时打 tag）；
+#   - 需要手工验证某个 tag 时用 workflow_dispatch，填入已存在的 tag。
 #
-# 产物文件名带 package.json 的 version，例如 starm-panel-v0.1.1-linux-x64；
-# Release tag 规则：每个版本的**首次**发布用 v<version>（如 v0.1.1），
-# 同一版本重复发布才追加序号（v0.1.1-2、v0.1.1-3…）。序号由 prepare 阶段的
-# scripts/release-tag.ts 读取仓库已有 tag 算出（见 src/shared/update.ts 的
-# nextReleaseTag），首发保持干净；同版本再发时序号接着排，不会与旧 tag 冲突。
+# 产物文件名带 package.json 的 version，例如 starm-panel-v0.1.5-linux-x64。
+# tag 规则：每个版本的**首次**发布用 v<version>（如 v0.1.5），同一版本重复发布才追加序号
+# （v0.1.5-2、v0.1.5-3…）。序号由本地 scripts/tag-release.ts 按已有 tag 算出
+# （见 src/shared/update.ts 的 nextReleaseTag），CI 只校验「tag 的版本段 == package.json 版本」。
 #
 # Release 说明来自仓库根目录的 CHANGELOG.md：按 package.json 的版本号取
 # `## <version>` 段落（scripts/release-notes.ts）。发版前先在 CHANGELOG.md
@@ -21,14 +24,19 @@
 name: 构建发布产物
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的发布 tag（如 v0.1.5 / v0.1.5-2）
+        required: true
+        type: string
 
-# 同一条合并提交只保留最新一次构建；已开始的构建不打断，避免半成品产物
+# 同一个 tag 只跑一次：Re-run、对同一 tag 手工触发都不会互相取消
 concurrency:
-  group: release-${{ github.event.pull_request.merge_commit_sha || github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -43,32 +51,41 @@ jobs:
   # 放到矩阵里各自构建会让 vite 白跑 6 遍
   prepare:
     name: 构建前端资源
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-      github.event.pull_request.head.ref == 'dev' &&
-      github.event.pull_request.head.repo.full_name == github.repository)
+    # 删除 tag 也会触发 push 事件，但此时 checkout 必然失败 —— 直接跳过，别留一条红叉
+    if: github.event_name == 'workflow_dispatch' || github.event.deleted == false
     runs-on: ubuntu-latest
     outputs:
-      # 产物文件名、Release 标题 / tag、构建摘要共用这一个版本号
+      # 产物文件名、Release 标题、构建摘要共用这一个版本号
       version: ${{ steps.meta.outputs.version }}
-      # 本次发布 tag（首发 v<version>，同版本重复发布 v<version>-<n>）。
-      # 只算一次：产物里注入的 STARM_RELEASE 与 Release tag 必须完全一致。
-      tag: ${{ steps.tag.outputs.tag }}
+      # 本次发布的 tag：tag 推送时就是它本身，手工触发时来自输入
+      tag: ${{ steps.meta.outputs.tag }}
+      # tag 指向的提交，Release 的 target_commitish 与构建摘要都用它
+      commit: ${{ steps.meta.outputs.commit }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-
-      - name: 读取版本号
-        id: meta
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          # tag 推送时 github.ref_name 就是 tag 名；手工触发用输入里的 tag
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+
+      - name: 解析发布信息
+        id: meta
+        run: |
+          echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # tag 与版本号对不上（打错 tag / 忘了改 package.json）时，产物里的版本与 Release 会互相打架，
+      # 必须在编译前停下。合法值：v<version> 或 v<version>-<序号>（如 0.1.5 的 v0.1.5 / v0.1.5-2）
+      - name: 校验 tag 与版本号
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: bun run scripts/release-tag.ts "$TAG"
 
       - name: 缓存依赖
         uses: actions/cache@v4
@@ -78,16 +95,6 @@ jobs:
 
       - name: 安装依赖
         run: bun install --frozen-lockfile
-
-      # 先同步远程 tag，再按「该版本是否已发布过」决定带不带序号；
-      # 结果写成 GitHub Actions 输出（tag=…），供 build / release 复用。
-      - name: 计算发布 tag
-        id: tag
-        env:
-          VERSION: ${{ steps.meta.outputs.version }}
-        run: |
-          git fetch --tags --force --quiet
-          bun run scripts/release-tag.ts "$VERSION" >> "$GITHUB_OUTPUT"
 
       # Release 说明来自仓库根目录的 CHANGELOG.md。这里先校验本版本段落存在，
       # 缺失就在 prepare 阶段失败，不浪费后面六平台的编译时间。
@@ -153,7 +160,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - name: 安装 Bun
         uses: oven-sh/setup-bun@v2
@@ -202,14 +209,14 @@ jobs:
     # prepare 是直接依赖：tag / version 都取自它的 outputs（作为构建任务的上游，它本来就已完成）
     needs: [prepare, build]
     runs-on: ubuntu-latest
-    # 全仓库默认只读，只有这一步需要写权限（建 tag / 建 Release）
+    # 全仓库默认只读，只有这一步需要写权限（建 / 更新 Release）
     permissions:
       contents: write
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          ref: ${{ inputs.tag || github.ref_name }}
 
       # merge-multiple：把 6 个 artifact 解到同一目录，压缩包里本来就只有一个文件，
       # 文件名互不相同，不会互相覆盖
@@ -247,8 +254,9 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: StarM Panel ${{ needs.prepare.outputs.tag }}
-          # 显式指定 tag 指向的提交，避免默认落到仓库默认分支的当前 tip
-          target_commitish: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+          # tag 已存在（prepare 已检出它），这里显式给出它指向的提交：
+          # 手工触发时 github.sha 是分支 tip，不能拿来做 Release 的目标提交
+          target_commitish: ${{ needs.prepare.outputs.commit }}
           files: release-out/*
           fail_on_unmatched_files: true
           body_path: release-notes.md
@@ -263,7 +271,7 @@ jobs:
           {
             echo "## StarM Panel ${{ needs.prepare.outputs.tag }} 构建产物"
             echo
-            echo "来源提交：\`${{ github.event.pull_request.merge_commit_sha || github.sha }}\`"
+            echo "来源提交：\`${{ needs.prepare.outputs.commit }}\`"
             echo
             echo "| 平台 | 运行环境 | 文件 |"
             echo "| --- | --- | --- |"

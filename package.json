@@ -13,7 +13,8 @@
     "build:assets": "bun run scripts/gen-assets.ts",
     "build:bin": "bun run scripts/build.ts",
     "typecheck": "vue-tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "release:tag": "bun run scripts/tag-release.ts"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.9.1",
