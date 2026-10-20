@@ -75,7 +75,9 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
 }
 
 .hero-title {
-  font-size: clamp(30px, 4.2vw, 50px);
+  /* 下限抬到 40px：vw 项在 ≤950px 就跌破下限了，之前窄窗口的标题只有 30px，
+     既和手机上（≤640px 会放大一档）接不上，本身也偏小 */
+  font-size: clamp(40px, 4.2vw, 50px);
   font-weight: 650;
   line-height: 1.1;
   letter-spacing: -0.02em;
@@ -89,7 +91,7 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
   align-self: center;
   width: 2px;
   height: 0.72em;
-  font-size: clamp(23px, 2.7vw, 34px);
+  font-size: clamp(30px, 2.7vw, 34px);
   border-radius: 1px;
   background: currentColor;
   opacity: 0.85;
@@ -103,7 +105,8 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
 }
 
 .clock-time {
-  font-size: clamp(23px, 2.7vw, 34px);
+  /* 与标题同一档下限：时钟是这一区的第二主角，缩到 23px 时只剩装饰性 */
+  font-size: clamp(30px, 2.7vw, 34px);
   font-weight: 500;
   letter-spacing: 0.01em;
 }
@@ -128,6 +131,24 @@ const label = computed(() => (props.title ?? '').trim() || 'StarM Panel')
 
   .hero-clock {
     align-items: center;
+  }
+
+  /*
+   * 手机上反而要放大一档：上面几处 clamp 的中间项是 vw，窄屏时会一路掉到下限
+   * （390px 上标题只有 30px、时钟 23px），而竖排之后旁边没有分隔线和时钟挤占
+   * 宽度，字号完全放得下。这里按视口宽度给一档更大的区间，320px 起就有 36px。
+   */
+  .hero-title {
+    font-size: clamp(36px, 10vw, 46px);
+  }
+
+  .clock-time {
+    font-size: clamp(30px, 8.4vw, 38px);
+  }
+
+  .clock-date {
+    margin-top: 4px;
+    font-size: 13px;
   }
 }
 </style>

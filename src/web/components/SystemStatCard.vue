@@ -426,4 +426,25 @@ const ratio = computed<number | null>(() => {
 .fill-tx {
   background: var(--warn);
 }
+
+/*
+ * 手机端：与 App 卡片同一套比例（见 ItemCard.vue 的同段注释）——
+ * 高度跟随列宽，保持桌面 ≈3:1 的长宽比。
+ * 下限 56px 是紧凑档内容的需要：11px 标签 + 13px 数值 + 4px 进度条 + 留白。
+ */
+@media (max-width: 640px) {
+  .size-sm,
+  .size-md,
+  .size-lg {
+    /* width 写死，避免 min-height 反推宽度把卡片撑出网格列（见 ItemCard.vue） */
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 1;
+    min-height: 56px;
+  }
+
+  .stat-card {
+    padding: 8px 11px;
+  }
+}
 </style>

@@ -250,6 +250,14 @@ const formSnapshot = () => JSON.stringify(form.value)
 const baseline = ref(formSnapshot())
 const dirty = computed(() => formSnapshot() !== baseline.value)
 const confirmClose = ref(false)
+/**
+ * 「放弃修改并关闭」的两段式退场：确认弹窗盖在编辑器上，两层不能同时开始 leave。
+ *
+ * NModal 的退场是「缩放到 0.5 + 淡出」。两层同时退场时，缩小的只是各自的面板，
+ * 于是小窗口在大窗口里又缩又挪，视觉上像两个窗口朝相反方向各飞各的。
+ * 所以先只关确认弹窗，等它 after-leave（≈0.25s）再关编辑器，两段动画首尾相接。
+ */
+const pendingClose = ref(false)
 
 const isEdit = computed(() => props.item !== null)
 const title = computed(() => (isEdit.value ? T.card.titleEdit : T.card.titleNew))
@@ -365,6 +373,7 @@ watch(
     if (!show) return
     errorText.value = null
     confirmClose.value = false
+    pendingClose.value = false
     if (item) {
       form.value = {
         title: item.title,
@@ -409,30 +418,13 @@ watch(
 
 // ── 校验 ─────────────────────────────────────────────────────
 
-/** 轻量校验：只判断「有没有 scheme 或是否是 host:port 形态」 */
-function looksLikeUrl(raw: string): boolean {
-  const s = raw.trim()
-  if (!s) return true
-  if (/^(https?|ftp|file|javascript|data):/i.test(s)) {
-    // 只接受 http/https
-    return /^https?:\/\//i.test(s)
-  }
-  // 无 scheme：host[:port][/path]，要求至少一个点或冒号，或单标签主机名
-  return /^[a-z0-9[\]_-]+(\.[a-z0-9[\]_-]+)*(:[0-9]{1,5})?(\/.*)?$/i.test(s)
-}
-
+/** 两个地址都空时不能提交：至少填一个（跨字段不变量由后端 schema 再校验一次） */
 const urlsEmpty = computed(
   () => form.value.lanUrl.trim() === '' && form.value.wanUrl.trim() === '',
 )
 
-const urlWarning = computed(() => {
-  if (!looksLikeUrl(form.value.lanUrl)) return T.card.invalidLanUrl
-  if (!looksLikeUrl(form.value.wanUrl)) return T.card.invalidWanUrl
-  return null
-})
-
 const canSubmit = computed(
-  () => form.value.title.trim() !== '' && !urlsEmpty.value && !urlWarning.value,
+  () => form.value.title.trim() !== '' && !urlsEmpty.value,
 )
 
 // ── 图标操作 ─────────────────────────────────────────────────
@@ -653,10 +645,6 @@ async function submit(): Promise<void> {
     errorText.value = T.card.addressRequired
     return
   }
-  if (urlWarning.value) {
-    errorText.value = urlWarning.value
-    return
-  }
 
   const body = {
     title: form.value.title.trim(),
@@ -713,8 +701,20 @@ function requestClose(): void {
   emit('update:show', false)
 }
 
+/** 确认「放弃修改」：先让确认弹窗自己退场，after-leave 后再关编辑器（见 pendingClose） */
 function discardAndClose(): void {
   confirmClose.value = false
+  pendingClose.value = true
+}
+
+/**
+ * 确认弹窗退场结束。
+ * 只有「放弃修改并关闭」这条路径需要接着关编辑器；「继续编辑」/ 点 × / Esc
+ * 关掉确认弹窗时 pendingClose 是 false，这里什么都不做。
+ */
+function onConfirmLeft(): void {
+  if (!pendingClose.value) return
+  pendingClose.value = false
   emit('update:show', false)
 }
 </script>
@@ -756,10 +756,6 @@ function discardAndClose(): void {
           <NInput v-model:value="form.wanUrl" :placeholder="T.card.formWanUrlPlaceholder" clearable />
         </NFormItem>
       </div>
-
-      <NAlert v-if="urlWarning" type="warning" :bordered="false" class="alert">
-        {{ urlWarning }}
-      </NAlert>
 
       <div class="two-col">
         <NFormItem :label="T.card.form.networkPref">
@@ -987,7 +983,8 @@ function discardAndClose(): void {
     </div>
   </NModal>
 
-  <!-- 未保存确认：替代原生 confirm，与应用视觉语言一致 -->
+  <!-- 未保存确认：替代原生 confirm，与应用视觉语言一致。
+       退场结束（after-leave）才放行编辑器的关闭，两层动画不重叠（见 pendingClose）。 -->
   <NModal
     v-model:show="confirmClose"
     preset="dialog"
@@ -999,6 +996,7 @@ function discardAndClose(): void {
     :style="{ width: '360px', maxWidth: '90vw' }"
     :positive-button-props="{ type: 'error' }"
     @positive-click="discardAndClose"
+    @after-leave="onConfirmLeft"
   />
 </template>
 

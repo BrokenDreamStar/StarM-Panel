@@ -370,4 +370,50 @@ function activate(): void {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/*
+ * 手机端：卡片按桌面卡片的比例缩放。
+ *
+ * 桌面 md 档在 1180px 内容区里是 209×70（≈3:1）；手机上是两列、列宽随视口在
+ * 138–195px 之间变。固定高度（58px）会让 320px 的屏变成 2.4:1、430px 变成 3.4:1
+ * —— 窄屏显得方、宽屏显得扁。这里让高度跟着列宽走（aspect-ratio），任何宽度
+ * 都保持桌面那个 ≈3:1 的比例。52px 是下限：36px 图标 + 上下各 8px 留白，再矮
+ * 就压到图标了，所以 320px 这类极窄屏仍有一点偏差。
+ */
+@media (max-width: 640px) {
+  .size-sm,
+  .size-md,
+  .size-lg {
+    /* width 必须写死：只给 aspect-ratio + min-height 时，浏览器会用 min-height
+       反推出一个更宽的盒子（320px 的屏上卡片会溢出所在的网格列），
+       列宽才是这一侧唯一权威的来源 */
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 1;
+    min-height: 52px;
+  }
+
+  /* 高度由比例决定后，纵向留白要收一档，否则 52px 的卡片里塞不下 36px 图标 */
+  .item-card {
+    padding: 8px 12px;
+  }
+
+  /*
+   * 手机上保留副标题。`.size-sm` 的隐藏规则是为**桌面的窄列**服务的（150px 一列、
+   * 58px 高，两行放不下）；手机虽然也用紧凑档，但卡片高度由 3:1 比例撑到 52–65px，
+   * 只要把行高收紧一档（正文继承的 1.62 太松），两行就装得下，不必砍信息。
+   */
+  .size-sm .subtitle {
+    display: block;
+  }
+
+  .title {
+    line-height: 1.2;
+  }
+
+  .subtitle {
+    margin-top: 2px;
+    line-height: 1.2;
+  }
+}
 </style>

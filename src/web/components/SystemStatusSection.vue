@@ -8,9 +8,9 @@
  *   - 每张卡片悬停时右上角浮出移除角标；
  *   - 拖拽卡片可调整顺序（按设备粒度，每张卡对应一台设备）。
  */
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { NPopover } from 'naive-ui'
-import { useSettingsStore } from '@/stores/settings'
+import { useCardSize } from '@/composables/useCardSize'
 import {
   useStatCards,
   cardDisplayName,
@@ -27,10 +27,9 @@ import SectionEditToggle from './SectionEditToggle.vue'
 
 const { cards, candidates, addCard, removeCard, moveCard } = useStatCards()
 const { confirm } = useDeleteConfirm()
-const settings = useSettingsStore()
 
-/** 卡片尺寸与 App 卡片共用 ui.cardSize（见 GroupSection） */
-const cardSize = computed(() => settings.cardSize)
+/** 卡片尺寸与 App 卡片共用 ui.cardSize（手机上一律紧凑档，见 useCardSize） */
+const cardSize = useCardSize()
 
 /** 编辑模式：开启后卡片右上角才显示移除角标 */
 const editMode = ref(false)
@@ -345,5 +344,30 @@ function onDrop(card: StatCardRef): void {
 
 .picker-hint {
   font-size: 11px;
+}
+
+/*
+ * 手机端：一行最少两张卡片（与 App 卡片同一套规则）。
+ * 硬件卡片比 App 卡片宽一档（160px），窄屏下同样用「半屏」兜底，
+ * 保证不会退化成一列；数值在紧凑档是上下堆叠的，不会被截断。
+ */
+@media (max-width: 640px) {
+  .stat-grid.size-sm,
+  .stat-grid.size-md,
+  .stat-grid.size-lg {
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(min(160px, calc(50% - 6px)), 1fr));
+  }
+
+  /* 「添加卡片」位与卡片同比例、同高度下限（见 ItemCard.vue 的比例说明） */
+  .stat-grid.size-sm .add-tile,
+  .stat-grid.size-md .add-tile,
+  .stat-grid.size-lg .add-tile {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 1;
+    min-height: 56px;
+    padding: 8px 12px;
+  }
 }
 </style>
