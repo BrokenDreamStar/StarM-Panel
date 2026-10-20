@@ -130,7 +130,7 @@ export interface UpdateReleaseInfo {
   /** 当前平台安装包的文件名；该 Release 没有对应包时为 null */
   assetName: string | null
   /**
-   * 本次要下载的字节数 —— 启用 zstd 压缩分发时是压缩包大小，
+   * 本次要下载的字节数 —— 也就是归档（zip / tar.gz）的大小，
    * 不是安装后的文件体积；该 Release 没有对应包时为 null
    */
   assetSize: number | null

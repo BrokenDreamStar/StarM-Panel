@@ -1,10 +1,10 @@
 /**
  * 软件更新相关的纯函数 —— 前后端共用。
  *
- * 这里只做「比较版本」和「认平台安装包」两件事，不碰网络与文件系统：
- * 服务端（services/update.ts）负责拉取 GitHub Release、下载与替换，
- * 前端只消费服务端算好的结果。放在 src/shared 下是为了让版本比较的规则
- * 只有一份，单测也只针对这一份。
+ * 这里只做「比较版本」「认平台归档」「校验更新清单」三件事，不碰网络与文件系统：
+ * 服务端（services/update.ts）负责拉取 GitHub Release、下载解包与替换，
+ * 前端只消费服务端算好的结果。放在 src/shared 下是为了让这些规则只有一份，
+ * 单测也只针对这一份 —— 更新器判错一步就是装错文件。
  */
 
 /** 解析后的发布标识：`v0.1.0-5` → version=0.1.0、build=5 */
@@ -134,13 +134,20 @@ export const UPDATE_PLATFORMS = [
 export type UpdatePlatform = (typeof UPDATE_PLATFORMS)[number]
 
 /**
- * 从安装包文件名识别平台后缀。
+ * 从安装包 / 归档文件名识别平台后缀。
  *
- * 兼容 `starm-panel-v0.1.0-linux-x64` 与早期的 `starm-panel-linux-x64`，
- * Windows 会带 `.exe`。识别不出返回 null（清单生成时据此报错）。
+ * 兼容裸可执行文件名（`starm-panel-v0.1.0-linux-x64`、Windows 带 `.exe`）、
+ * 归档名（`.tar.gz` / `.zip`）以及早期不带版本号的命名。
+ * 识别不出返回 null（清单生成时据此报错）。
  */
 export function platformFromAssetName(name: string): UpdatePlatform | null {
-  const base = name.endsWith('.exe') ? name.slice(0, -'.exe'.length) : name
+  let base = name
+  for (const ext of ['.tar.gz', '.zip', '.exe']) {
+    if (base.endsWith(ext)) {
+      base = base.slice(0, -ext.length)
+      break
+    }
+  }
   for (const platform of UPDATE_PLATFORMS) {
     if (base.endsWith(`-${platform}`)) return platform
   }
@@ -148,13 +155,14 @@ export function platformFromAssetName(name: string): UpdatePlatform | null {
 }
 
 /**
- * 当前平台安装包的文件名候选（按优先级）。
+ * 当前平台归档的文件名候选（按优先级）。
  *
- * 新版发布带版本号（`starm-panel-v0.1.0-linux-x64`），早期发布不带版本号。
+ * 新版发布带版本号（`starm-panel-v0.1.5-linux-x64.tar.gz`），早期发布不带版本号。
  * 网页备用检查拿不到 Release 的资产清单，只能按名字探测，因此两个都试一遍。
+ * 归档格式按平台决定（Windows `.zip`，其余 `.tar.gz`）。
  */
 export function assetNameCandidates(version: string, suffix: string): string[] {
-  const ext = suffix.startsWith('windows-') ? '.exe' : ''
+  const ext = archiveExtension(archiveKindBySuffix(suffix))
   const versioned = `starm-panel-v${version}-${suffix}${ext}`
   const legacy = `starm-panel-${suffix}${ext}`
   return versioned === legacy ? [versioned] : [versioned, legacy]
@@ -206,51 +214,93 @@ export function isPlatformExecutableHeader(bytes: Uint8Array, platform: string):
   }
 }
 
-/** 压缩包扩展名 —— 生成脚本与解析器共用，避免两边各写一遍 `.zst` */
-export const COMPRESSED_ASSET_EXT = '.zst'
+/**
+ * 归档格式。
+ *
+ * Windows 用 `.zip`（资源管理器双击即可解压），macOS / Linux 用 `.tar.gz`
+ * （系统自带 tar，而 `unzip` 在很多最小化发行版里要额外安装）。
+ * 体积上两者几乎一样（同一套 deflate 算法，实测 60/79MB 产物差 0.01–0.10 MiB），
+ * 所以选格式只看「用户手里有什么工具」。
+ */
+export type UpdateArchiveKind = 'zip' | 'tar.gz'
 
-/** 安装包对应的压缩包文件名：`starm-panel-v0.1.2-linux-x64` → `…-linux-x64.zst` */
-export function compressedAssetName(assetName: string): string {
-  return `${assetName}${COMPRESSED_ASSET_EXT}`
+/** 归档扩展名 */
+export function archiveExtension(kind: UpdateArchiveKind): string {
+  return kind === 'zip' ? '.zip' : '.tar.gz'
+}
+
+/** 平台后缀 → 归档格式 */
+export function archiveKindBySuffix(suffix: string): UpdateArchiveKind {
+  return suffix.startsWith('windows-') ? 'zip' : 'tar.gz'
 }
 
 /**
- * `latest.json` 里同一安装包的 zstd 压缩包。
+ * 归档名 → 归档内那个可执行文件的名字（Windows 在 zip 里带 `.exe`）。
  *
- * 单文件产物里运行时占 98%，六平台产物 60–84MB，而 zstd 能压到三成左右。
- * 压缩包只用于**传输**：更新器解压后仍按未压缩产物的 `size` / `sha256` 校验，
- * 再写盘替换，所以启用压缩不降低校验强度，也不改变安装后的文件体积。
+ * 网页备用路径拿不到清单，只能按归档名反推该期待什么文件名；清单路径直接用
+ * 清单里的 `name`，两条路径都对解包结果做同样的核对。
  */
-export interface UpdateManifestZstd {
-  /** 压缩包文件名，固定为 `<安装包名>.zst` */
+export function executableNameFromArchive(archiveName: string, suffix: string): string {
+  let base = archiveName
+  for (const ext of ['.tar.gz', '.zip']) {
+    if (base.endsWith(ext)) {
+      base = base.slice(0, -ext.length)
+      break
+    }
+  }
+  return archiveKindBySuffix(suffix) === 'zip' ? `${base}.exe` : base
+}
+
+/**
+ * 归档文件名。
+ *
+ * Windows 的可执行文件带 `.exe`，归档名去掉它（`…-windows-x64.zip`），
+ * 归档内部仍然是 `…-windows-x64.exe`；其余平台直接加 `.tar.gz`。
+ */
+export function archiveNameFor(assetName: string, suffix: string): string {
+  const kind = archiveKindBySuffix(suffix)
+  const base = kind === 'zip' && assetName.endsWith('.exe') ? assetName.slice(0, -'.exe'.length) : assetName
+  return `${base}${archiveExtension(kind)}`
+}
+
+/**
+ * `latest.json` 里单个平台产物的归档 —— 更新器实际下载的对象。
+ *
+ * 归档只用于**传输**：更新器解压后按未压缩产物的 `size` / `sha256` 校验，
+ * 再写盘替换，所以压缩不降低校验强度，也不改变安装后的文件体积。
+ */
+export interface UpdateManifestArchive {
+  kind: UpdateArchiveKind
+  /** 归档文件名，形如 `starm-panel-v0.1.5-linux-x64.tar.gz` */
   name: string
-  /** 压缩包字节数 */
+  /** 归档字节数 */
   size: number
-  /** 压缩包的 sha256（hex） */
+  /** 归档的 sha256（hex） */
   sha256: string
 }
 
 /**
- * `latest.json` 更新清单的单个安装包条目。
+ * `latest.json` 更新清单的单个平台条目。
  *
- * 清单是发布流水线从**即将上传的产物**上算出来的，sha256 与二进制一一对应；
- * 更新器只要拿到清单，就不需要再调 GitHub API 或猜资产名。
+ * `name` / `size` / `sha256` 描述**解压后的可执行文件**（也是安装后的文件名），
+ * `archive` 描述要下载的归档；两者都从即将上传的同一批文件算出。
  */
 export interface UpdateManifestAsset {
   platform: UpdatePlatform
   name: string
   size: number
   sha256: string
-  /**
-   * 同一产物的 zstd 压缩包，供支持解压的客户端省下载流量。
-   * 旧版发布没有这个字段，网页回退路径也拿不到，更新器届时直接下载原始产物。
-   */
-  zstd: UpdateManifestZstd | null
+  archive: UpdateManifestArchive
 }
 
-/** `latest.json` 更新清单（schema = 1） */
+/**
+ * `latest.json` 更新清单（schema = 2）。
+ *
+ * 从 schema 2 起 Release 只发布归档、不再有裸可执行文件，因此 0.1.4 及更早的
+ * 客户端无法再自动更新 —— 这是刻意接受的取舍（见 docs/DESIGN.md ADR-008）。
+ */
 export interface UpdateManifest {
-  schema: 1
+  schema: 2
   /** 发布 tag，如 v0.1.0-6 */
   tag: string
   /** 版本号（必须与 tag 的版本段一致） */
@@ -265,23 +315,28 @@ const SHA256_RE = /^[0-9a-f]{64}$/i
 const ASSET_NAME_RE = /^[A-Za-z0-9._-]+$/
 
 /**
- * 解析条目里可选的 `zstd` 字段。
+ * 解析条目的 `archive` 字段。
  *
- * 返回 `null` = 没有压缩包（旧版发布，正常情况）；返回 `false` = 字段存在但不合法
- * （清单有问题）。两者必须分开：只有后者才把整份清单判坏。
+ * 归档是唯一的下载对象，没有任何容错余地：格式必须与平台匹配、文件名必须是
+ * 该安装包对应的归档名、size / sha256 必须合法 —— 有一项不对就整份清单判坏，
+ * 否则就会出现「下到的不是被校验过的东西」。
  */
-function parseZstdAsset(raw: unknown, assetName: string): UpdateManifestZstd | null | false {
-  if (raw === undefined || raw === null) return null
-  if (typeof raw !== 'object') return false
+function parseArchiveAsset(
+  raw: unknown,
+  assetName: string,
+  platform: UpdatePlatform,
+): UpdateManifestArchive | null {
+  if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
+  const kind = o.kind === 'zip' || o.kind === 'tar.gz' ? o.kind : null
   const name = typeof o.name === 'string' ? o.name.trim() : ''
   const size = typeof o.size === 'number' && Number.isFinite(o.size) && o.size > 0 ? o.size : null
   const sha256 = typeof o.sha256 === 'string' ? o.sha256.trim() : ''
-  if (size === null || !SHA256_RE.test(sha256)) return false
-  // 压缩包必须就是同一条目的安装包加 `.zst`：两个文件各指一处的话，
-  // 「解压后按未压缩产物的 sha256 校验」这道闸门就失去意义了
-  if (!ASSET_NAME_RE.test(name) || name !== compressedAssetName(assetName)) return false
-  return { name, size, sha256: sha256.toLowerCase() }
+  if (!kind || size === null || !SHA256_RE.test(sha256)) return null
+  if (!ASSET_NAME_RE.test(name) || name !== archiveNameFor(assetName, platform)) return null
+  // 平台与归档格式必须对得上：Windows 只能 zip，其余只能 tar.gz
+  if (kind !== archiveKindBySuffix(platform)) return null
+  return { kind, name, size, sha256: sha256.toLowerCase() }
 }
 
 /**
@@ -294,7 +349,7 @@ function parseZstdAsset(raw: unknown, assetName: string): UpdateManifestZstd | n
 export function parseUpdateManifest(raw: unknown): UpdateManifest | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
-  if (o.schema !== 1) return null
+  if (o.schema !== 2) return null
 
   const tag = typeof o.tag === 'string' ? o.tag.trim() : ''
   const parsed = parseReleaseTag(tag)
@@ -318,8 +373,8 @@ export function parseUpdateManifest(raw: unknown): UpdateManifest | null {
     // 未知平台直接忽略：以后发布矩阵增加平台时，旧客户端不该整份清单判坏
     if (!UPDATE_PLATFORMS.includes(platform as UpdatePlatform)) continue
     if (!ASSET_NAME_RE.test(name) || size === null || !SHA256_RE.test(sha256)) return null
-    const zstd = parseZstdAsset(a.zstd, name)
-    if (zstd === false) return null
+    const archive = parseArchiveAsset(a.archive, name, platform as UpdatePlatform)
+    if (!archive) return null
     // 同一平台出现两次说明清单生成有 bug，直接判坏
     if (assets.some((x) => x.platform === platform)) return null
     assets.push({
@@ -327,14 +382,14 @@ export function parseUpdateManifest(raw: unknown): UpdateManifest | null {
       name,
       size,
       sha256: sha256.toLowerCase(),
-      zstd,
+      archive,
     })
   }
 
   // 全部条目都是未知平台时等同于坏清单
   if (assets.length === 0) return null
 
-  return { schema: 1, tag: parsed.tag, version: parsed.version, publishedAt, assets }
+  return { schema: 2, tag: parsed.tag, version: parsed.version, publishedAt, assets }
 }
 
 /**

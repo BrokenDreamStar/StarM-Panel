@@ -6,13 +6,13 @@
  *   - 发布 tag 首发为 `v<version>`，同一版本重复发布才带序号（`v<version>-2`…），
  *     因此「当前版本」以构建期注入的 RELEASE_TAG 为准（见 src/shared/version.ts）。
  *
- * 流程：检查（latest.json，缺失时回退网页）→ 下载到同目录临时文件 → 校验大小 / sha256 →
- * 备份旧文件、改名替换 → 交给 services/restart 拉起新进程。
+ * 流程：检查（latest.json，缺失时回退网页）→ 下载归档 → 校验归档大小 / sha256 →
+ * 解压并核对可执行文件（名字 + 大小 + sha256）→ 写临时文件、改名替换 →
+ * 交给 services/restart 拉起新进程。
  *
- * 下载体积：清单里带 `zstd` 条目时优先下载压缩包（60–84MB → 19–29MB），
- * 解压后再按**未压缩产物**的 size / sha256 校验，校验强度与下载原始产物完全一致；
- * 压缩包缺失、镜像不转发或解压失败时自动退回原始产物。压缩只省下载流量，
- * 装上去的文件体积不变。
+ * 下载体积：Release 只发布归档（Windows `.zip`、macOS/Linux `.tar.gz`，
+ * 60–84MB → 25–35MB，约四成），解压后仍按清单里的可执行文件 size / sha256 校验，
+ * 校验强度与下载裸可执行文件一致。压缩只省下载流量，装上去的文件体积不变。
  *
  * 平台差异：Windows 不能覆盖正在运行的 exe，但**可以改名**，所以
  * 「旧文件改成 .old、新文件改成原名」这条路径两个平台通用。
@@ -30,11 +30,12 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-  writeSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
+  archiveKindBySuffix,
   assetNameCandidates,
+  executableNameFromArchive,
   isAllowedDownloadUrl,
   isAllowedSourceUrl,
   isNewerRelease,
@@ -44,11 +45,13 @@ import {
   platformSuffix,
   tagFromReleaseLocation,
   type ReleaseVersion,
+  type UpdateArchiveKind,
 } from '@shared/update'
 import type { UpdateCheckResult, UpdateReleaseInfo, UpdateState } from '@shared/types'
 import { APP_VERSION, RELEASE_TAG } from '@shared/version'
 import { getConfig } from '../env'
 import { HttpError } from '../middleware/error'
+import { extractArchive } from './archive'
 import { isVirtualEntry, scheduleRestart } from './restart'
 
 /** 一次检查的总预算：清单 + 网页回退 + 资产探测都在这个窗口内完成 */
@@ -62,26 +65,31 @@ const PROBE_TIMEOUT_MS = 10_000
 /** 检查结果缓存时长：避免反复点「检查更新」时重复下载清单 / 探测资产 */
 const CACHE_TTL_MS = 60_000
 
-/** 同一安装包的 zstd 压缩包 */
-interface CompressedAsset {
-  name: string
-  size: number | null
-  url: string
-  /** 压缩包的 sha256（hex） */
-  digest: string
-}
-
-/** 从 Release 里挑出来的安装包 */
+/**
+ * 从 Release 里挑出来的安装包。
+ *
+ * Release 只发布归档，所以下载对象永远是 `archive`；`name` / `size` / `digest`
+ * 描述解压之后的可执行文件（清单才有，网页备用路径拿不到）。
+ */
 interface DownloadAsset {
+  /** 归档内的可执行文件名，也是安装后的文件名 */
   name: string
+  /** 解压后的字节数；未知为 null */
   size: number | null
-  url: string
-  /** 未压缩产物的 sha256（hex），清单路径才有；网页备用路径为 null */
+  /** 解压后的 sha256（hex）；未知为 null */
   digest: string | null
+  /** 归档本身（唯一的下载对象） */
+  archive: {
+    kind: UpdateArchiveKind
+    name: string
+    /** 归档字节数；未知为 null */
+    size: number | null
+    /** 归档的 sha256（hex）；网页备用路径为 null */
+    digest: string | null
+    url: string
+  }
   /** 可信来源 origin：下载时据此核对最终跳转地址 */
   origin: string
-  /** 可选的压缩包：有就优先下载它，省下载流量 */
-  compressed: CompressedAsset | null
 }
 
 interface LatestRelease {
@@ -119,17 +127,10 @@ class ManifestUnavailableError extends Error {
 }
 
 /**
- * 下载地址不在白名单内。
- *
- * 这是信任边界问题，不能靠「换另一条下载路径」绕过，因此压缩包失败回退时
- * 要把它单独放行出来（见 runUpdate）。
+ * 下载地址不在白名单内 —— 属于信任边界问题，直接中止整次更新，
+ * 不做任何「换条路径再试」的兜底。
  */
-class UntrustedAssetError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'UntrustedAssetError'
-  }
-}
+const UNTRUSTED_ASSET_MESSAGE = '下载地址不在允许的域名内，已中止'
 
 /** 进程级单例：同一时间只允许一个更新任务（见 startUpdate） */
 let cached: CachedCheck | null = null
@@ -290,17 +291,15 @@ async function fetchLatestReleaseViaManifest(
     asset = {
       name: entry.name,
       size: entry.size,
-      url: resolveDownloadUrl(releaseUrl(entry.name), cfg.mirror),
       digest: entry.sha256,
+      archive: {
+        kind: entry.archive.kind,
+        name: entry.archive.name,
+        size: entry.archive.size,
+        digest: entry.archive.sha256,
+        url: resolveDownloadUrl(releaseUrl(entry.archive.name), cfg.mirror),
+      },
       origin: cfg.base,
-      compressed: entry.zstd
-        ? {
-            name: entry.zstd.name,
-            size: entry.zstd.size,
-            url: resolveDownloadUrl(releaseUrl(entry.zstd.name), cfg.mirror),
-            digest: entry.zstd.sha256,
-          }
-        : null,
     }
   }
 
@@ -312,8 +311,8 @@ async function fetchLatestReleaseViaManifest(
       publishedAt: manifest.publishedAt,
       htmlUrl: `${cfg.base}/${cfg.repo}/releases/tag/${encodeURIComponent(manifest.tag)}`,
       assetName: asset?.name ?? null,
-      // 展示 / 初始化进度条都用「这次要下载多少」：有压缩包就是压缩包大小
-      assetSize: asset ? (asset.compressed?.size ?? asset.size) : null,
+      // 展示 / 初始化进度条都用「这次要下载多少」—— 也就是归档的大小
+      assetSize: asset?.archive.size ?? null,
     },
     asset,
   }
@@ -323,8 +322,8 @@ async function fetchLatestReleaseViaManifest(
  * 网页路径（兜底）：latest.json 不可用时才走这里。
  *
  * 先用 `/releases/latest` 的 302 跳转拿到最新 tag（与网页「最新发布」语义一致），
- * 再按发布资产命名规则探测当前平台的安装包。拿不到 digest，因此下载后会
- * 补一道「文件大小 + 可执行文件头」校验（见 runUpdate）。
+ * 再按发布资产命名规则探测当前平台的归档（`.tar.gz` / `.zip`）。拿不到 digest，
+ * 因此下载后只做「归档大小 + 解包后的可执行文件头」校验（见 runUpdate）。
  */
 async function fetchLatestReleaseViaWeb(
   cfg: UpdateRuntimeConfig,
@@ -366,14 +365,18 @@ async function fetchLatestReleaseViaWeb(
       const probe = await probeAsset(url, cfg, deadline)
       if (!probe) continue
       asset = {
-        name,
-        size: probe.size,
-        url: resolveDownloadUrl(url, cfg.mirror),
-        // 网页方式拿不到官方 digest，由 runUpdate 用大小 + 可执行文件头兜底；
-        // 同理也拿不到压缩包信息，只能下原始产物
+        name: executableNameFromArchive(name, suffix),
+        size: null,
+        // 网页方式拿不到官方 digest，由 runUpdate 用大小 + 可执行文件头兜底
         digest: null,
+        archive: {
+          kind: archiveKindBySuffix(suffix),
+          name,
+          size: probe.size,
+          digest: null,
+          url: resolveDownloadUrl(url, cfg.mirror),
+        },
         origin: cfg.base,
-        compressed: null,
       }
       break
     } catch (err) {
@@ -392,7 +395,7 @@ async function fetchLatestReleaseViaWeb(
       publishedAt: null,
       htmlUrl: `${cfg.base}/${cfg.repo}/releases/tag/${encodeURIComponent(tag)}`,
       assetName: asset?.name ?? null,
-      assetSize: asset?.size ?? null,
+      assetSize: asset?.archive.size ?? null,
     },
     asset,
   }
@@ -559,7 +562,7 @@ export async function startUpdate(tag: string): Promise<{ tag: string }> {
     phase: 'downloading',
     tag,
     received: 0,
-    total: asset.compressed?.size ?? asset.size,
+    total: asset.archive.size,
     error: null,
     startedAt: Date.now(),
   }
@@ -613,66 +616,20 @@ async function openDownload(
   if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`)
   if (!res.body) throw new Error('下载失败：响应为空')
   if (!mirror && !isTrustedAssetUrl(res.url || url, origin)) {
-    throw new UntrustedAssetError('下载地址不在允许的域名内，已中止')
+    throw new Error(UNTRUSTED_ASSET_MESSAGE)
   }
   return { res, body: res.body }
 }
 
 /**
- * 下载未压缩安装包，边下边写盘。
+ * 下载归档到内存，并校验归档自身的 size / sha256。
  *
- * 60–84MB 的产物不整块读进内存；只有走压缩包路径时才需要缓冲区
- * （见 downloadCompressedTo）。
+ * 归档只有 25–35MB，整块读进内存后直接交给解包器（解出 60–84MB，峰值约 140MB）；
+ * 更新是一次性操作，这点内存换掉「归档落盘再读回来」的一次写盘 + 读盘是划算的。
  */
-async function downloadRawTo(asset: DownloadAsset, tmp: string, mirror: string): Promise<void> {
-  setState({ phase: 'downloading', received: 0, total: asset.size })
-  const { res, body } = await openDownload(asset.url, asset.origin, mirror)
-
-  const contentLength = Number(res.headers.get('content-length'))
-  if (Number.isFinite(contentLength) && contentLength > 0) setState({ total: contentLength })
-
-  const hasher = new Bun.CryptoHasher('sha256')
-  // 用同步 fd 写：writeSync 保证每次把整块写进文件（FileSink 的缓冲语义
-  // 取决于运行时实现），更新这种一次性操作不值得为异步 IO 冒截断的风险。
-  const fd = openSync(tmp, 'w')
-  let received = 0
-  try {
-    const reader = body.getReader()
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      received += value.byteLength
-      hasher.update(value)
-      let offset = 0
-      while (offset < value.byteLength) {
-        offset += writeSync(fd, value, offset, value.byteLength - offset)
-      }
-      setState({ received })
-    }
-  } finally {
-    closeSync(fd)
-  }
-  setState({ received })
-
-  setState({ phase: 'verifying' })
-  verifyDownload('安装包', asset.size, asset.digest, received, hasher.digest('hex'))
-}
-
-/**
- * 下载 zstd 压缩包、解压后写入临时文件。
- *
- * 压缩包只有 20–30MB，整块读进内存再解压（解压后 60–84MB，峰值约 140MB）
- * 比「压缩包落盘再读回来解压」少一次 30MB 的写盘 + 读盘，实现也更简单；
- * 更新是一次性操作，这点内存换掉一次磁盘往返是划算的。
- *
- * 校验顺序：压缩包自己的 size / sha256 → 解压 → 未压缩产物的 size / sha256。
- */
-async function downloadCompressedTo(asset: DownloadAsset, tmp: string, mirror: string): Promise<void> {
-  const compressed = asset.compressed
-  if (!compressed) throw new Error('没有可用的压缩包')
-
-  setState({ phase: 'downloading', received: 0, total: compressed.size })
-  const { res, body } = await openDownload(compressed.url, asset.origin, mirror)
+async function downloadArchive(asset: DownloadAsset, mirror: string): Promise<Uint8Array> {
+  setState({ phase: 'downloading', received: 0, total: asset.archive.size })
+  const { res, body } = await openDownload(asset.archive.url, asset.origin, mirror)
 
   const contentLength = Number(res.headers.get('content-length'))
   if (Number.isFinite(contentLength) && contentLength > 0) setState({ total: contentLength })
@@ -691,35 +648,29 @@ async function downloadCompressedTo(asset: DownloadAsset, tmp: string, mirror: s
   }
 
   setState({ phase: 'verifying' })
-  verifyDownload('压缩包', compressed.size, compressed.digest, received, hasher.digest('hex'))
-
-  const packed = Buffer.concat(chunks)
-  chunks.length = 0
-  const raw = decompressZstdPackage(packed)
-  packed.fill(0)
-  verifyDownload(
-    '安装包',
-    asset.size,
-    asset.digest,
-    raw.byteLength,
-    new Bun.CryptoHasher('sha256').update(raw).digest('hex'),
-  )
-  writeFileSync(tmp, raw)
+  verifyDownload('归档', asset.archive.size, asset.archive.digest, received, hasher.digest('hex'))
+  return Buffer.concat(chunks)
 }
 
 /**
- * 解压 zstd 安装包（纯函数，便于单测）。
+ * 解包并校验里面的可执行文件。
  *
- * 解压失败一律抛错：宁可让用户重新下载，也不要把半个文件装上去。
+ * 顺序：解包 → 文件名必须是清单里那个 → 解压后的 size / sha256（清单路径才有）。
+ * 任何一步不对都在写盘之前停下来，目录里不会留下半成品。
  */
-export function decompressZstdPackage(payload: Uint8Array): Uint8Array {
-  // 空响应（有些代理会用 200 + 0 字节顶替失败）不该被当成合法压缩包
-  if (payload.byteLength === 0) throw new Error('安装包解压失败（zstd）：内容是空的')
-  try {
-    return Bun.zstdDecompressSync(payload)
-  } catch (err) {
-    throw new Error(`安装包解压失败（zstd）：${errorMessage(err)}`)
+async function extractExecutable(asset: DownloadAsset, archiveBytes: Uint8Array): Promise<Uint8Array> {
+  const file = await extractArchive(archiveBytes, asset.archive.kind)
+  if (file.name !== asset.name) {
+    throw new Error(`归档里的文件名不符：预期 ${asset.name}，实际 ${file.name}`)
   }
+  verifyDownload(
+    '可执行文件',
+    asset.size,
+    asset.digest,
+    file.bytes.byteLength,
+    new Bun.CryptoHasher('sha256').update(file.bytes).digest('hex'),
+  )
+  return file.bytes
 }
 
 async function runUpdate(tag: string, asset: DownloadAsset): Promise<void> {
@@ -730,21 +681,9 @@ async function runUpdate(tag: string, asset: DownloadAsset): Promise<void> {
   const { update } = getConfig()
 
   try {
-    if (asset.compressed) {
-      try {
-        await downloadCompressedTo(asset, tmp, update.mirror)
-      } catch (err) {
-        // 压缩包没上传 / 镜像不转发 / 解压失败时退回未压缩产物：两条路径各自
-        // 独立校验（各自的 size 与 sha256），退回不降低安全性，只是多下一些流量。
-        // 但「地址不可信」是信任边界问题，不能靠换条路径绕过。
-        if (err instanceof UntrustedAssetError) throw err
-        console.warn(`[update] 压缩包不可用，改用未压缩安装包：${errorMessage(err)}`)
-        removeQuietly(tmp)
-        await downloadRawTo(asset, tmp, update.mirror)
-      }
-    } else {
-      await downloadRawTo(asset, tmp, update.mirror)
-    }
+    const archiveBytes = await downloadArchive(asset, update.mirror)
+    const executable = await extractExecutable(asset, archiveBytes)
+    writeFileSync(tmp, executable)
 
     // 网页备用路径没有 digest，用文件头再确认一次「确实是当前平台的可执行程序」：
     // 至少挡住 HTML 错误页、代理返回的说明页或错误平台的包。
@@ -756,7 +695,7 @@ async function runUpdate(tag: string, asset: DownloadAsset): Promise<void> {
     setState({ phase: 'restarting' })
     scheduleRestart()
   } catch (err) {
-    // 临时文件一定要清掉：失败后目录里不该留下 80MB 的半成品
+    // 临时文件一定要清掉：失败后目录里不该留下几十 MB 的半成品
     removeQuietly(tmp)
     setState({ phase: 'error', error: errorMessage(err) })
     console.error(`[update] 更新到 ${tag} 失败：`, err)
