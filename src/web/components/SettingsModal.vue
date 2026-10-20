@@ -10,8 +10,9 @@
  *
  * 所有改动最终都写回 PATCH /api/settings —— 乐观更新：
  * 本地立即生效，失败只提示不回滚（离线也能先改主题 / 网络模式）。
- * 滑块 / 取色器这类连续型控件用 saveLive()：拖动过程先 preview() 本地预览，
- * 停止后把中间值合并成一次 PATCH、只弹一次提示，否则拖一下就刷一串「已保存」。
+ * 滑块 / 取色器 / 数字步进器这类连续型控件用 saveLive()：拖动或按住 +/- 的过程
+ * 只 preview() 本地预览，停下后把中间值合并成一次 PATCH、只弹一次「已保存」，
+ * 否则拖一下 / 按住一下就刷一串请求和提示。
  */
 import { computed, ref, watch, onBeforeUnmount, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
@@ -38,7 +39,7 @@ import { useAuthStore } from '@/stores/auth'
 import { api, type BackupImportMode } from '@/api/client'
 import { SETTINGS_DEFAULTS } from '@/api/settings'
 import { useDeleteConfirm } from '@/composables/useDeleteConfirm'
-import { fmtBytes, fmtUptimeFull } from '@/utils/format'
+import { fmtBytes, fmtCpuName, fmtUptimeFull } from '@/utils/format'
 import FaviconGlyph from '@/components/FaviconGlyph.vue'
 import { TEXT as T, type SectionKey } from '@shared/text'
 import { APP_VERSION } from '@shared/version'
@@ -63,49 +64,71 @@ const { confirm } = useDeleteConfirm()
 
 const { error } = storeToRefs(settings)
 
-async function save(patch: Record<string, unknown>, label: string, quiet = false): Promise<void> {
+async function save(patch: Record<string, unknown>, label: string): Promise<void> {
   const ok = await settings.patch(patch)
-  if (ok) {
-    if (!quiet) message.success(T.settings.saved(label))
-  } else {
-    message.error(T.settings.saveFailed(label))
-  }
+  if (ok) message.success(T.settings.saved(label))
+  else message.error(T.settings.saveFailed(label))
 }
 
 /**
- * 连续型控件（滑块 / 取色器 / URL 输入）专用：每个中间值先 preview 到本地
- * 保证实时预览，PATCH 请求与成功提示去抖合并成一次。
+ * 连续型控件（滑块 / 取色器 / URL 输入 / 数字步进器）专用：每个中间值先
+ * preview 到本地保证实时预览，PATCH 请求与成功提示去抖合并成一次。
+ *
+ * NInputNumber 的 +/- 按钮支持「按住连续步进」（按住 800ms 后每 100ms 触发一次
+ * update:value），采样间隔这类设置必须走这里 —— 直接 save() 会在按住时连发
+ * 请求、连弹「已保存」。
  */
-const live: { body: Record<string, unknown>; label: string; quiet: boolean } = {
-  body: {},
-  label: '',
-  quiet: false,
-}
+const LIVE_SAVE_DELAY = 500
+const live: { body: Record<string, unknown>; label: string } = { body: {}, label: '' }
 let liveTimer: ReturnType<typeof setTimeout> | null = null
 
-function saveLive(patch: Record<string, unknown>, label: string, quiet = false): void {
+function saveLive(patch: Record<string, unknown>, label: string): void {
   settings.preview(patch)
   Object.assign(live.body, patch)
   live.label = label
-  live.quiet = quiet
   if (liveTimer !== null) clearTimeout(liveTimer)
   liveTimer = setTimeout(() => {
     liveTimer = null
     void commitLive()
-  }, 500)
+  }, LIVE_SAVE_DELAY)
 }
 
 async function commitLive(): Promise<void> {
   const body = live.body
   const label = live.label
-  const quiet = live.quiet
   live.body = {}
   if (Object.keys(body).length === 0) return
   const ok = await settings.patch(body)
-  if (ok) {
-    if (!quiet) message.success(T.settings.saved(label))
-  } else {
-    message.error(T.settings.saveFailed(label))
+  if (ok) message.success(T.settings.saved(label))
+  else message.error(T.settings.saveFailed(label))
+}
+
+/** 立刻发出待发改动（关闭面板 / 卸载组件时用，避免丢掉最后一次调整）。 */
+function flushLive(): void {
+  if (liveTimer !== null) {
+    clearTimeout(liveTimer)
+    liveTimer = null
+  }
+  void commitLive()
+}
+
+/**
+ * 只摘掉指定键的待发改动，其它键照常去抖。
+ *
+ * 还原默认值 / 上传新壁纸这类「立即覆盖」操作，若不等挂起的旧值先发出去，
+ * 500ms 后那个旧值会把刚写入的默认值 / 新地址盖回去。
+ */
+function dropLive(...keys: string[]): void {
+  let changed = false
+  for (const key of keys) {
+    if (key in live.body) {
+      delete live.body[key]
+      changed = true
+    }
+  }
+  if (changed && Object.keys(live.body).length === 0 && liveTimer !== null) {
+    clearTimeout(liveTimer)
+    liveTimer = null
   }
 }
 
@@ -142,6 +165,8 @@ watch(
       void auth.load()
     } else {
       document.removeEventListener('keydown', onKeydown)
+      // 关面板时把还没落库的连续型改动立刻补发，别让它悬在去抖计时器里
+      flushLive()
       // 关掉设置面板时顺手收起几个子弹窗，下次打开不会自己冒出来
       closePasswordDialog()
       closeImportDialog()
@@ -161,11 +186,7 @@ watch(
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown)
   // 还有没落库的去抖改动就立刻补发，避免丢最后一次调整
-  if (liveTimer !== null) {
-    clearTimeout(liveTimer)
-    liveTimer = null
-    void commitLive()
-  }
+  flushLive()
 })
 
 // ── 导航 ─────────────────────────────────────────────────────
@@ -247,6 +268,8 @@ const defaultTransparency = computed(() => SETTINGS_DEFAULTS[TRANSPARENCY_KEY[se
 const defaultBlur = computed(() => SETTINGS_DEFAULTS[blurKey.value])
 
 function resetTransparency(): void {
+  // 滑杆里还没落库的值先摘掉，否则 500ms 后会把刚还原的默认值盖回去
+  dropLive(TRANSPARENCY_KEY[settings.glassStyle])
   void save(
     { [TRANSPARENCY_KEY[settings.glassStyle]]: defaultTransparency.value },
     T.settings.labels.transparency,
@@ -254,6 +277,7 @@ function resetTransparency(): void {
 }
 
 function resetBlur(): void {
+  dropLive(blurKey.value)
   void save({ [blurKey.value]: defaultBlur.value }, T.settings.labels.blur)
 }
 
@@ -291,11 +315,10 @@ function commitEdit(which: NumericSlider, min: number, max: number): void {
     saveLive(
       { [TRANSPARENCY_KEY[settings.glassStyle]]: next },
       T.settings.labels.transparency,
-      true,
     )
   } else {
     if (next === settings.cardBlur) return
-    saveLive({ [blurKey.value]: next }, T.settings.labels.blur, true)
+    saveLive({ [blurKey.value]: next }, T.settings.labels.blur)
   }
 }
 
@@ -324,6 +347,8 @@ async function onWallpaperFile(event: Event): Promise<void> {
   wallpaperUploading.value = true
   try {
     const asset = await api.assets.upload(file, 'wallpaper')
+    // 还没落库的图片地址先作废：否则它可能在上传完成后才落库，把新地址盖掉
+    dropLive('wallpaper.value')
     // bgUrl 不存在时（理论上只有图标）回落到哈希接口，至少能用
     await save(
       { 'wallpaper.type': 'asset', 'wallpaper.value': asset.bgUrl ?? asset.url },
@@ -382,12 +407,8 @@ const APPEARANCE_KEYS = [
 ] as const
 
 async function resetAppearance(): Promise<void> {
-  // 丢弃还没落库的去抖预览值，否则还原后旧值会再补发一次把默认值盖回去
-  if (liveTimer !== null) {
-    clearTimeout(liveTimer)
-    liveTimer = null
-    live.body = {}
-  }
+  // 只丢弃这次还原会覆盖的外观键；别的键（如采样间隔）仍在去抖里，留给计时器发
+  dropLive(...APPEARANCE_KEYS)
   const patch: Record<string, unknown> = {}
   for (const key of APPEARANCE_KEYS) patch[key] = SETTINGS_DEFAULTS[key]
   const ok = await settings.patch(patch)
@@ -441,14 +462,20 @@ async function setAutoMode(value: boolean): Promise<void> {
 
 // ── 监控：采样间隔 ───────────────────────────────────────────
 
-/** 采样间隔输入框：清空（null）或非法值直接忽略，避免写入脏值 */
+/**
+ * 采样间隔输入框：清空（null）或非法值直接忽略，避免写入脏值。
+ *
+ * 走 saveLive 而不是 save —— NInputNumber 的 +/- 支持按住连续步进
+ * （800ms 后每 100ms 触发一次 update:value），直接 PATCH 会连发请求、
+ * 连弹「已保存」；去抖后只在停下时落库一次，拖动过程仍由 preview 实时跟手。
+ */
 function commitInterval(
   key: 'monitor.interval' | 'monitor.hiddenInterval',
   value: number | null,
   label: string,
 ): void {
   if (value === null || !Number.isFinite(value)) return
-  void save({ [key]: value }, label)
+  saveLive({ [key]: value }, label)
 }
 
 // ── 安全：会话 / 登录保护 / 密码 ─────────────────────────────
@@ -1170,7 +1197,6 @@ watch(
                               saveLive(
                                 { [TRANSPARENCY_KEY[settings.glassStyle]]: v },
                                 T.settings.labels.transparency,
-                                true,
                               )
                           "
                         />
@@ -1223,7 +1249,7 @@ watch(
                           :min="0"
                           :max="48"
                           :step="1"
-                          @update:value="(v: number) => saveLive({ [blurKey]: v }, T.settings.labels.blur, true)"
+                          @update:value="(v: number) => saveLive({ [blurKey]: v }, T.settings.labels.blur)"
                         />
                         <input
                           v-if="editing === 'blur'"
@@ -1660,7 +1686,7 @@ watch(
                     <span class="kv-value mono">{{ platform?.hostname ?? '—' }}</span>
 
                     <span class="kv-label">{{ T.settings.kv.cpu }}</span>
-                    <span class="kv-value mono">{{ monitor.staticInfo?.cpu.brand || '—' }}</span>
+                    <span class="kv-value mono">{{ fmtCpuName(monitor.staticInfo?.cpu) }}</span>
 
                     <span class="kv-label">{{ T.settings.kv.kernel }}</span>
                     <span class="kv-value mono">{{ monitor.staticInfo?.os.kernel || '—' }}</span>

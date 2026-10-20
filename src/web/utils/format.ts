@@ -123,6 +123,37 @@ export function fmtGhz(v: number | null | undefined): string {
   return `${v.toFixed(2)} GHz`
 }
 
+/** 去掉厂商标记里的 ® / ™ / (R) / (TM)，只用于「型号里是否已含厂商」的比较 */
+function cleanVendorToken(s: string): string {
+  return s
+    .replace(/[®™]/g, '')
+    .replace(/\((?:r|tm)\)/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * CPU 展示名：**厂商 + 型号**（如 `Apple M2`、`AMD Ryzen 7 5800X`）。
+ *
+ * `si.cpu()` 的 brand 在 Intel / AMD 上通常已经自带厂商
+ * （"Intel(R) Core(TM) …" / "AMD Ryzen 7 …"），但 macOS 只给 "M2"、
+ * 不少 ARM 板子只给 "Cortex-A72" —— 同一栏里有时有厂商、有时没有。
+ * 这里统一补齐；型号里已经含厂商的不再重复前缀。
+ */
+export function fmtCpuName(
+  cpu: { manufacturer?: string | null; brand?: string | null } | null | undefined,
+): string {
+  const brand = cpu?.brand?.trim() ?? ''
+  const manufacturer = cpu?.manufacturer?.trim() ?? ''
+  if (!brand) return manufacturer || '—'
+  if (!manufacturer) return brand
+
+  const vendor = cleanVendorToken(manufacturer).toLowerCase()
+  if (!vendor) return brand
+  // 型号里已出现厂商（Intel® Core™ / AMD Ryzen …）就原样显示，避免 “Intel Intel(R) Core”
+  return cleanVendorToken(brand).toLowerCase().includes(vendor) ? brand : `${manufacturer} ${brand}`
+}
+
 /** GPU 频率：clockCore / clockMemory 是 MHz */
 export function fmtMhz(v: number | null | undefined): string {
   if (!isNum(v) || v <= 0) return '—'

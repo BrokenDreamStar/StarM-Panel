@@ -6,7 +6,7 @@
  * 边界集中在「进位」和「脏数据」两处：59/60 秒、23/24 小时都要落在正确的段上。
  */
 import { describe, expect, test } from 'bun:test'
-import { fmtUptime, fmtUptimeFull } from './format'
+import { fmtCpuName, fmtUptime, fmtUptimeFull } from './format'
 
 describe('fmtUptime（卡片：省秒）', () => {
   test('按量级取最长的两段', () => {
@@ -54,5 +54,38 @@ describe('fmtUptimeFull（关于：天时分秒）', () => {
     expect(fmtUptimeFull(undefined)).toBe('—')
     expect(fmtUptimeFull(Number.NaN)).toBe('—')
     expect(fmtUptimeFull(-1)).toBe('—')
+  })
+})
+
+/**
+ * CPU 展示名：所有显示型号的地方都要带厂商。
+ * 难点只有一处 —— Intel / AMD 的 brand 本身常已含厂商，不能再前缀一次。
+ */
+describe('fmtCpuName（厂商 + 型号）', () => {
+  test('型号不带厂商时补上', () => {
+    expect(fmtCpuName({ manufacturer: 'Apple', brand: 'M2' })).toBe('Apple M2')
+    expect(fmtCpuName({ manufacturer: 'AMD', brand: 'Ryzen 7 5800X' })).toBe('AMD Ryzen 7 5800X')
+    expect(fmtCpuName({ manufacturer: 'ARM', brand: 'Cortex-A72' })).toBe('ARM Cortex-A72')
+  })
+
+  test('型号里已带厂商时不重复', () => {
+    expect(fmtCpuName({ manufacturer: 'Intel', brand: 'Intel(R) Core(TM) i7-12700K' })).toBe(
+      'Intel(R) Core(TM) i7-12700K',
+    )
+    expect(fmtCpuName({ manufacturer: 'AMD', brand: 'AMD Ryzen 7 5800X 8-Core Processor' })).toBe(
+      'AMD Ryzen 7 5800X 8-Core Processor',
+    )
+    expect(fmtCpuName({ manufacturer: 'Intel®', brand: 'Intel® Core™ i5-8250U' })).toBe(
+      'Intel® Core™ i5-8250U',
+    )
+    expect(fmtCpuName({ manufacturer: 'Apple', brand: 'apple M1 Pro' })).toBe('apple M1 Pro')
+  })
+
+  test('缺半边数据时用另一半，全缺给 —', () => {
+    expect(fmtCpuName({ manufacturer: 'Apple', brand: '  ' })).toBe('Apple')
+    expect(fmtCpuName({ manufacturer: '', brand: 'M2' })).toBe('M2')
+    expect(fmtCpuName({ manufacturer: '', brand: '' })).toBe('—')
+    expect(fmtCpuName(null)).toBe('—')
+    expect(fmtCpuName(undefined)).toBe('—')
   })
 })

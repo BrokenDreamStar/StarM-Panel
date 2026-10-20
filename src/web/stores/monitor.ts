@@ -3,7 +3,7 @@
  *
  * 图表历史是本地环形数组（最近 `HISTORY_POINTS` 个点），刻意不依赖
  * GET /api/system/history：后者只有服务端 300 点缓冲，且重连后补齐
- * 反而会让折线跳变。60 点 ≈ 1 分钟的 1s 采样窗口，足够看趋势。
+ * 反而会让折线跳变。60 点 ≈ 3 分钟（默认 3s 采样），足够看趋势。
  */
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'

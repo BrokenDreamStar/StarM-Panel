@@ -64,7 +64,7 @@ export const SETTINGS_DEFAULTS = {
 
   'search.defaultEngine': 'bing',
 
-  'monitor.interval': 1000,
+  'monitor.interval': 3000,
   'monitor.hiddenInterval': 10_000,
   /**
    * 首页「系统状态」区展示哪些卡片，数组顺序 = 展示顺序（由首页增删 / 拖拽写入）。

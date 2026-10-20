@@ -73,7 +73,7 @@ export function usedMemory(m: { total: number; free: number; available: number }
  * 因此超时与异常同等对待，一律降级为 fallback（字段级失败隔离）。
  *
  *   - 静态信息：按需触发（一个请求采一次），可以等久一点；
- *   - 高频采样：1s 主循环 / 3s GPU 采样器，等太久会拖住后续整轮采样，必须尽早放弃。
+ *   - 高频采样：主循环（默认 3s）/ GPU 采样器（3s），等太久会拖住后续整轮采样，必须尽早放弃。
  *
  * 做成可变对象是为了让单测能调得很小（否则一个用例要等 10 秒）。
  */
@@ -612,7 +612,7 @@ export interface CpuUsage {
   perCore: number[]
 }
 
-/** 默认最小测量窗口：1s 采样间隔下即便慢轮抖动也不会把窗口压到 0.1s 量级 */
+/** 默认最小测量窗口：调用方未显式传入时（单测等）的兜底，防止慢轮把窗口压到 0.1s 量级 */
 export const DEFAULT_MIN_CPU_WINDOW_MS = 800
 
 function clampPct(v: number): number {
@@ -712,7 +712,7 @@ export interface CollectSnapshotOptions {
  * 采集一次动态快照。
  *
  * 注意：本函数**不调用 si.graphics()**。GPU 由独立的 GpuSampler 以更低频率
- * 采集（见 docs/DESIGN.md §7.3），避免每秒 spawn nvidia-smi 子进程。
+ * 采集（见 docs/DESIGN.md §7.3），避免每轮主循环都 spawn nvidia-smi 子进程。
  * GPU 数据由调用方通过 gpus 参数注入。
  *
  * 三项慢变指标（磁盘容量 / 进程数 / 用户数）按 `SLOW_METRIC_TTL_MS` 缓存，

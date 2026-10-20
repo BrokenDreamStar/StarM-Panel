@@ -22,6 +22,7 @@ import {
   clampPct,
   fmtBytes,
   fmtBytesPair,
+  fmtCpuName,
   fmtDiskRate,
   fmtGhz,
   fmtMhz,
@@ -57,6 +58,11 @@ const snap = computed(() => monitor.latest)
 const stat = computed(() => monitor.staticInfo)
 
 const cpu = computed(() => snap.value?.cpu ?? null)
+/** CPU 展示名（厂商 + 型号）；静态信息未到或为空时返回 null，由调用方兜底 */
+const cpuName = computed(() => {
+  const c = stat.value?.cpu
+  return c && (c.brand.trim() || c.manufacturer.trim()) ? fmtCpuName(c) : null
+})
 const cpuTemp = computed(() => cpu.value?.temp ?? null)
 const mem = computed(() => snap.value?.mem ?? null)
 const sys = computed(() => snap.value?.system ?? null)
@@ -235,7 +241,7 @@ const title = computed(() =>
 const subtitle = computed(() => {
   switch (kind.value) {
     case 'cpu':
-      return stat.value?.cpu.brand || T.detail.processor
+      return cpuName.value ?? T.detail.processor
     case 'memory':
       return T.detail.memorySwap
     case 'disk':
@@ -261,7 +267,7 @@ const infoRows = computed<InfoRow[]>(() => {
     case 'cpu': {
       const s = stat.value?.cpu
       return [
-        { label: T.detail.kv.model, value: s?.brand || '—' },
+        { label: T.detail.kv.model, value: cpuName.value ?? '—' },
         { label: T.detail.kv.manufacturer, value: s?.manufacturer || '—' },
         {
           label: T.detail.kv.coresThreads,
@@ -304,7 +310,7 @@ const infoRows = computed<InfoRow[]>(() => {
         { label: T.detail.kv.uptime, value: fmtUptime(sys.value?.uptime) },
         { label: T.detail.kv.processes, value: sys.value ? String(sys.value.processes) : '—' },
         { label: T.detail.kv.users, value: sys.value ? String(sys.value.users) : '—' },
-        { label: T.detail.kv.cpuModel, value: s?.cpu.brand || '—' },
+        { label: T.detail.kv.cpuModel, value: cpuName.value ?? '—' },
         { label: T.detail.kv.memoryTotal, value: fmtBytes(mem.value?.total) },
       ]
     }
