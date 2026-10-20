@@ -19,7 +19,11 @@ export const DEFAULT_SETTINGS = {
 
   'search.defaultEngine': 'bing',
 
-  'monitor.interval': 1000,
+  /**
+   * 前台采样间隔（ms）。默认 3s：硬件指标都是秒级慢变量，3s 足够看出变化，
+   * 采样与 SSE 推送开销只有 1s 的三分之一。
+   */
+  'monitor.interval': 3000,
   'monitor.hiddenInterval': 10_000,
   /**
    * 首页「系统状态」区展示哪些硬件卡片，数组顺序即展示顺序。

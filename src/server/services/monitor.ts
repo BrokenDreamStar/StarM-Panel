@@ -18,14 +18,15 @@ import {
   type CollectorState,
 } from './system-info'
 
-/** 环形缓冲长度：300 点 @1s ≈ 5 分钟趋势 */
+/** 环形缓冲长度：300 点 @3s ≈ 15 分钟趋势 */
 const RING_SIZE = 300
 
 /**
  * GPU 采样间隔（ms）—— **固定值，刻意不做成设置项**（见 DESIGN.md §7.3）。
  *
  * GPU 采集要 spawn `nvidia-smi` / `ioreg`，单次开销比 `si.*` 高一个量级，
- * 所以它不跟随 1s 主循环。而它可调的方向只有「更慢」和「把机器拖卡」两种，
+ * 所以它不跟随可调的主循环（`monitor.interval` 最小可到 100ms）：主循环调快时
+ * GPU 仍按 3s 采。而它可调的方向只有「更慢」和「把机器拖卡」两种，
  * 不值得给用户一个能把自己机器调卡的旋钮。
  */
 const GPU_INTERVAL_MS = 3000
@@ -46,7 +47,7 @@ export interface MonitorConfig {
 }
 
 export const DEFAULT_MONITOR_CONFIG: MonitorConfig = {
-  intervalMs: 1000,
+  intervalMs: 3000,
   hiddenIntervalMs: 10_000,
 }
 
@@ -105,8 +106,8 @@ class MonitorService {
       })
       .catch((err) => console.warn('[monitor] GPU 初始化失败:', err?.message ?? err))
 
-    // 首轮延后一个 CPU 测量窗口（0.8×间隔，默认 0.8s）再采：
-    // 立刻采的话窗口为 0，CPU 只有一个假的 0%；而 0.8s 的空窗期里
+    // 首轮延后一个 CPU 测量窗口（0.8×间隔，默认 2.4s）再采：
+    // 立刻采的话窗口为 0，CPU 只有一个假的 0%；而这段空窗期里
     // /api/system/snapshot 返回 503 NOT_READY，前端已按正常状态处理。
     this.reschedule(Math.round(this.config.intervalMs * 0.8))
   }

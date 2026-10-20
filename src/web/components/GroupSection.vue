@@ -10,7 +10,7 @@ import { computed, ref, nextTick } from 'vue'
 import { NButton, NDropdown, NInput, type DropdownOption } from 'naive-ui'
 import type { Group, Item } from '@shared/types'
 import { useItemsStore } from '@/stores/items'
-import { useSettingsStore } from '@/stores/settings'
+import { useCardSize } from '@/composables/useCardSize'
 import { TEXT as T } from '@shared/text'
 import ItemCard from './ItemCard.vue'
 import FaviconGlyph from './FaviconGlyph.vue'
@@ -37,7 +37,6 @@ const emit = defineEmits<{
 }>()
 
 const itemsStore = useItemsStore()
-const settings = useSettingsStore()
 
 const collapsed = ref(props.group?.collapsed ?? false)
 
@@ -148,7 +147,8 @@ async function onDrop(target: Item): Promise<void> {
   }
 }
 
-const cardSize = computed(() => settings.cardSize)
+/** 手机上一律紧凑档（见 useCardSize），桌面按设置 */
+const cardSize = useCardSize()
 </script>
 
 <template>
@@ -391,5 +391,34 @@ const cardSize = computed(() => settings.cardSize)
 .add-tile:hover .plus-circle {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/*
+ * 手机端：一行最少两张卡片。
+ *
+ * 三档的 minmax 在窄屏（320–430px）都会退化成单列，卡片因此又长又空。
+ * 这里把列宽取下限写成「档位宽度与半屏（减半个间距）中的较小者」：
+ * 宽度够时照常按 auto-fill 多排，不够时也至少排两列 —— 390px 的屏上
+ * 是两张 173px 的卡片，320px 的屏上是两张 ~138px 的卡片（标题按省略号收）。
+ * 间距同步收一档，给卡片留出文字宽度。
+ */
+@media (max-width: 640px) {
+  .group-body.size-sm,
+  .group-body.size-md,
+  .group-body.size-lg {
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(min(150px, calc(50% - 6px)), 1fr));
+  }
+
+  /* 「新建卡片」位跟卡片同比例、同高度下限，同一行里不能一高一矮 */
+  .group-body.size-sm .add-tile,
+  .group-body.size-md .add-tile,
+  .group-body.size-lg .add-tile {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3 / 1;
+    min-height: 52px;
+    padding: 8px 12px;
+  }
 }
 </style>

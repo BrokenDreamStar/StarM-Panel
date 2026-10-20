@@ -6,9 +6,11 @@
  */
 import { describe, expect, test } from 'bun:test'
 import {
+  archiveKindBySuffix,
+  archiveNameFor,
   assetNameCandidates,
   compareVersions,
-  compressedAssetName,
+  executableNameFromArchive,
   isAllowedDownloadUrl,
   isAllowedSourceUrl,
   isNewerRelease,
@@ -129,11 +131,13 @@ describe('platformSuffix', () => {
 })
 
 describe('platformFromAssetName', () => {
-  test('兼容带版本号 / 不带版本号 / Windows .exe', () => {
+  test('兼容带版本号 / 不带版本号 / Windows .exe / 归档名', () => {
     expect(platformFromAssetName('starm-panel-v0.1.0-linux-x64')).toBe('linux-x64')
     expect(platformFromAssetName('starm-panel-linux-x64')).toBe('linux-x64')
     expect(platformFromAssetName('starm-panel-v0.1.0-windows-arm64.exe')).toBe('windows-arm64')
     expect(platformFromAssetName('starm-panel-darwin-arm64')).toBe('darwin-arm64')
+    expect(platformFromAssetName('starm-panel-v0.1.5-linux-x64.tar.gz')).toBe('linux-x64')
+    expect(platformFromAssetName('starm-panel-v0.1.5-windows-x64.zip')).toBe('windows-x64')
   })
 
   test('识别不出的文件返回 null', () => {
@@ -146,13 +150,25 @@ describe('platformFromAssetName', () => {
 describe('parseUpdateManifest', () => {
   const sha = 'a'.repeat(64)
   const base = {
-    schema: 1,
+    schema: 2,
     tag: 'v0.1.0-6',
     version: '0.1.0',
     publishedAt: '2026-10-19T00:00:00.000Z',
     assets: [
-      { platform: 'linux-x64', name: 'starm-panel-v0.1.0-linux-x64', size: 123, sha256: sha },
-      { platform: 'windows-arm64', name: 'starm-panel-v0.1.0-windows-arm64.exe', size: 456, sha256: sha.toUpperCase() },
+      {
+        platform: 'linux-x64',
+        name: 'starm-panel-v0.1.0-linux-x64',
+        size: 123,
+        sha256: sha,
+        archive: { kind: 'tar.gz', name: 'starm-panel-v0.1.0-linux-x64.tar.gz', size: 45, sha256: sha },
+      },
+      {
+        platform: 'windows-arm64',
+        name: 'starm-panel-v0.1.0-windows-arm64.exe',
+        size: 456,
+        sha256: sha.toUpperCase(),
+        archive: { kind: 'zip', name: 'starm-panel-v0.1.0-windows-arm64.zip', size: 78, sha256: sha },
+      },
     ],
   }
 
@@ -163,6 +179,12 @@ describe('parseUpdateManifest', () => {
     expect(manifest?.version).toBe('0.1.0')
     expect(manifest?.assets).toHaveLength(2)
     expect(manifest?.assets[1]?.sha256).toBe(sha)
+    expect(manifest?.assets[0]?.archive).toEqual({
+      kind: 'tar.gz',
+      name: 'starm-panel-v0.1.0-linux-x64.tar.gz',
+      size: 45,
+      sha256: sha,
+    })
   })
 
   test('缺少 publishedAt 不算坏清单', () => {
@@ -172,7 +194,8 @@ describe('parseUpdateManifest', () => {
 
   test('拒绝结构 / 版本 / 平台 / 大小 / sha256 不合法的清单', () => {
     expect(parseUpdateManifest(null)).toBeNull()
-    expect(parseUpdateManifest({ ...base, schema: 2 })).toBeNull()
+    // schema 1 是「裸可执行文件」时代的清单，schema 2 只认归档
+    expect(parseUpdateManifest({ ...base, schema: 1 })).toBeNull()
     expect(parseUpdateManifest({ ...base, tag: 'latest' })).toBeNull()
     expect(parseUpdateManifest({ ...base, version: '0.2.0' })).toBeNull()
     expect(parseUpdateManifest({ ...base, assets: [] })).toBeNull()
@@ -231,48 +254,40 @@ describe('parseUpdateManifest', () => {
     ).toBeNull()
   })
 
-  test('带 zstd 压缩包：解析出压缩包名 / 大小 / sha256（统一小写）', () => {
-    const zsha = 'b'.repeat(64)
-    const manifest = parseUpdateManifest({
-      ...base,
-      assets: [
-        {
-          platform: 'linux-x64',
-          name: 'starm-panel-v0.1.0-linux-x64',
-          size: 123,
-          sha256: sha,
-          zstd: { name: 'starm-panel-v0.1.0-linux-x64.zst', size: 45, sha256: zsha.toUpperCase() },
-        },
-      ],
-    })
-    expect(manifest?.assets[0]?.zstd).toEqual({
-      name: 'starm-panel-v0.1.0-linux-x64.zst',
-      size: 45,
-      sha256: zsha,
-    })
+  test('归档必须与平台匹配：Windows 只能 zip，其余只能 tar.gz', () => {
+    const withArchive = (platform: string, name: string, kind: string, archiveName: string) =>
+      parseUpdateManifest({
+        ...base,
+        assets: [
+          { platform, name, size: 1, sha256: sha, archive: { kind, name: archiveName, size: 1, sha256: sha } },
+        ],
+      })
+    expect(
+      withArchive('linux-x64', 'starm-panel-v0.1.0-linux-x64', 'zip', 'starm-panel-v0.1.0-linux-x64.zip'),
+    ).toBeNull()
+    expect(
+      withArchive('windows-x64', 'starm-panel-v0.1.0-windows-x64.exe', 'tar.gz', 'starm-panel-v0.1.0-windows-x64.tar.gz'),
+    ).toBeNull()
+    // 归档名必须是「可执行文件名（Windows 去掉 .exe）+ 对应扩展名」
+    expect(withArchive('linux-x64', 'starm-panel-v0.1.0-linux-x64', 'tar.gz', 'other.tar.gz')).toBeNull()
+    expect(
+      withArchive('windows-x64', 'starm-panel-v0.1.0-windows-x64.exe', 'zip', 'starm-panel-v0.1.0-windows-x64.exe.zip'),
+    ).toBeNull()
+    expect(
+      withArchive('windows-x64', 'starm-panel-v0.1.0-windows-x64.exe', 'zip', 'starm-panel-v0.1.0-windows-x64.zip'),
+    ).not.toBeNull()
   })
 
-  test('没有 zstd 字段＝旧版清单，照常可用；null 等同于没有', () => {
-    expect(parseUpdateManifest(base)?.assets[0]?.zstd).toBeNull()
-    const withNull = parseUpdateManifest({
-      ...base,
-      assets: [{ platform: 'linux-x64', name: 'starm-panel-v0.1.0-linux-x64', size: 1, sha256: sha, zstd: null }],
-    })
-    expect(withNull?.assets[0]?.zstd).toBeNull()
-  })
-
-  test('zstd 字段不合法时整份清单判坏', () => {
-    const name = 'starm-panel-v0.1.0-linux-x64'
-    const withZstd = (zstd: unknown) =>
-      parseUpdateManifest({ ...base, assets: [{ platform: 'linux-x64', name, size: 123, sha256: sha, zstd }] })
-    // 压缩包必须就是同一条目的安装包加 .zst
-    expect(withZstd({ name: 'other.zst', size: 1, sha256: sha })).toBeNull()
-    expect(withZstd({ name: `${name}.tar.zst`, size: 1, sha256: sha })).toBeNull()
-    expect(withZstd({ name: `${name}.zst`, size: 1, sha256: sha })?.assets[0]?.zstd?.name).toBe(`${name}.zst`)
-    // 大小 / sha256 / 类型非法
-    expect(withZstd({ name: `${name}.zst`, size: 0, sha256: sha })).toBeNull()
-    expect(withZstd({ name: `${name}.zst`, size: 1, sha256: 'nope' })).toBeNull()
-    expect(withZstd('zstd')).toBeNull()
+  test('缺少 archive 字段的清单直接判坏（schema 2 只认归档）', () => {
+    expect(
+      parseUpdateManifest({ ...base, assets: [{ platform: 'linux-x64', name: 'x', size: 1, sha256: sha }] }),
+    ).toBeNull()
+    expect(
+      parseUpdateManifest({
+        ...base,
+        assets: [{ platform: 'linux-x64', name: 'x', size: 1, sha256: sha, archive: { kind: 'rar' } }],
+      }),
+    ).toBeNull()
   })
 })
 
@@ -320,16 +335,16 @@ describe('isAllowedSourceUrl', () => {
 })
 
 describe('assetNameCandidates', () => {
-  test('新版带版本号，旧版不带；Windows 自动补 .exe', () => {
+  test('新版带版本号，旧版不带；扩展名按平台选 zip / tar.gz', () => {
     expect(assetNameCandidates('0.1.0', 'linux-x64')).toEqual([
-      'starm-panel-v0.1.0-linux-x64',
-      'starm-panel-linux-x64',
+      'starm-panel-v0.1.0-linux-x64.tar.gz',
+      'starm-panel-linux-x64.tar.gz',
     ])
     expect(assetNameCandidates('0.1.0', 'windows-x64')).toEqual([
-      'starm-panel-v0.1.0-windows-x64.exe',
-      'starm-panel-windows-x64.exe',
+      'starm-panel-v0.1.0-windows-x64.zip',
+      'starm-panel-windows-x64.zip',
     ])
-    expect(assetNameCandidates('1.2.3', 'darwin-arm64')[0]).toBe('starm-panel-v1.2.3-darwin-arm64')
+    expect(assetNameCandidates('1.2.3', 'darwin-arm64')[0]).toBe('starm-panel-v1.2.3-darwin-arm64.tar.gz')
   })
 })
 
@@ -375,13 +390,17 @@ describe('isPlatformExecutableHeader', () => {
   })
 })
 
-describe('compressedAssetName', () => {
-  test('压缩包名固定是安装包名加 .zst', () => {
-    expect(compressedAssetName('starm-panel-v0.1.2-linux-x64')).toBe('starm-panel-v0.1.2-linux-x64.zst')
-    expect(compressedAssetName('starm-panel-v0.1.2-windows-x64.exe')).toBe(
-      'starm-panel-v0.1.2-windows-x64.exe.zst',
-    )
-    // .zst 文件本身不会被当成安装包（平台识别取的是尾部后缀）
-    expect(platformFromAssetName('starm-panel-v0.1.2-linux-x64.zst')).toBeNull()
+describe('归档命名', () => {
+  test('Windows 用 zip（去掉 .exe），macOS / Linux 用 tar.gz', () => {
+    const linux = 'starm-panel-v0.1.5-linux-x64'
+    const win = 'starm-panel-v0.1.5-windows-x64.exe'
+    expect(archiveKindBySuffix('linux-x64')).toBe('tar.gz')
+    expect(archiveKindBySuffix('darwin-arm64')).toBe('tar.gz')
+    expect(archiveKindBySuffix('windows-x64')).toBe('zip')
+    expect(archiveNameFor(linux, 'linux-x64')).toBe(`${linux}.tar.gz`)
+    expect(archiveNameFor(win, 'windows-x64')).toBe('starm-panel-v0.1.5-windows-x64.zip')
+    // 归档内仍然是带 .exe 的可执行文件
+    expect(executableNameFromArchive(`${linux}.tar.gz`, 'linux-x64')).toBe(linux)
+    expect(executableNameFromArchive('starm-panel-v0.1.5-windows-x64.zip', 'windows-x64')).toBe(win)
   })
 })

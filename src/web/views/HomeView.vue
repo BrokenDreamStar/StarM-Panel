@@ -264,4 +264,17 @@ onUnmounted(() => {
   margin: 0;
   line-height: 1.7;
 }
+
+/* 手机端：32px 的两侧留白会把 390px 的屏挤到只剩 326px（一行放不下两张卡片），
+   收成 16px；骨架屏与真卡片同一套列宽，加载完成时列数不跳变。 */
+@media (max-width: 640px) {
+  .content {
+    padding: 0 16px 32px;
+  }
+
+  .skeleton-grid {
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(min(150px, calc(50% - 6px)), 1fr));
+  }
+}
 </style>

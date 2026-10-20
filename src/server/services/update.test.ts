@@ -17,7 +17,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { decompressZstdPackage, installBinary } from './update'
+import { installBinary } from './update'
 
 const dirs: string[] = []
 
@@ -82,21 +82,5 @@ describe('installBinary', () => {
     expect(() => installBinary(tmp, target)).toThrow()
     expect(readFileSync(target, 'utf8')).toBe('old-binary')
     expect(existsSync(tmp)).toBe(false)
-  })
-})
-
-describe('decompressZstdPackage', () => {
-  test('解开清单里那份 zstd 压缩包', () => {
-    const payload = new TextEncoder().encode('\x7fELF starm-panel binary')
-    const packed = Bun.zstdCompressSync(payload)
-    const raw = decompressZstdPackage(packed)
-    expect(raw.byteLength).toBe(payload.byteLength)
-    expect(new TextDecoder().decode(raw)).toBe('\x7fELF starm-panel binary')
-  })
-
-  test('不是 zstd 数据时抛错，不会装上半截文件', () => {
-    // 代理返回的 HTML 错误页 / 空响应都不该被当成安装包
-    expect(() => decompressZstdPackage(new TextEncoder().encode('<html>404</html>'))).toThrow()
-    expect(() => decompressZstdPackage(new Uint8Array())).toThrow()
   })
 })

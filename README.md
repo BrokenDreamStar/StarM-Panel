@@ -9,36 +9,41 @@
 
 ## 下载
 
-前往 [Releases](https://github.com/BrokenDreamStar/StarM-Panel/releases/latest) 页面，下载对应平台可执行文件或
+前往 [Releases](https://github.com/BrokenDreamStar/StarM-Panel/releases/latest) 页面下载对应平台的归档：
+**macOS / Linux 是 `.tar.gz`，Windows 是 `.zip`**。归档里只有一个可执行文件，解开即可运行。
+面板的「检查更新」也走同一份归档，会自动替换程序本身。
 
 ```bash
-curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.4-linux-x64
+# Linux x64（arm64 把文件名里的 x64 换成 arm64）
+curl -fLO https://github.com/BrokenDreamStar/StarM-Panel/releases/latest/download/starm-panel-v0.1.5-linux-x64.tar.gz
+tar xzf starm-panel-v0.1.5-linux-x64.tar.gz
 ```
 
 ## 启动
 
-> 版本号替换为下载的实际版本号 x64/arm64根据你的平台架构选择。
+> 版本号替换为下载的实际版本号，x64 / arm64 根据你的平台架构选择。
 
 ### Linux
 
 ```bash
-chmod +x starm-panel-v0.1.4-linux-x64
-./starm-panel-v0.1.4-linux-x64
+chmod +x starm-panel-v0.1.5-linux-x64
+./starm-panel-v0.1.5-linux-x64
 ```
 
 ### macOS
 
 ```bash
-chmod +x starm-panel-v0.1.4-darwin-arm64
-./starm-panel-v0.1.4-darwin-arm64
+tar xzf starm-panel-v0.1.5-darwin-arm64.tar.gz
+chmod +x starm-panel-v0.1.5-darwin-arm64
+./starm-panel-v0.1.5-darwin-arm64
 ```
 
 ### Windows
 
-双击 `starm-panel-v0.1.4-windows-x64.exe`，或在 PowerShell 中运行：
+解压 `starm-panel-v0.1.5-windows-x64.zip`，双击里面的 `starm-panel-v0.1.5-windows-x64.exe`，或在 PowerShell 中运行：
 
 ```powershell
-.\starm-panel-v0.1.4-windows-x64.exe
+.\starm-panel-v0.1.5-windows-x64.exe
 ```
 
 ### 打开面板
@@ -46,7 +51,7 @@ chmod +x starm-panel-v0.1.4-darwin-arm64
 启动后终端会打印监听地址：
 
 ```
-  StarM Panel v0.1.4
+  StarM Panel v0.1.5
   ────────────────────────────────────────
   监听    0.0.0.0:3002
   访问    http://localhost:3002
@@ -55,7 +60,7 @@ chmod +x starm-panel-v0.1.4-darwin-arm64
 
 浏览器打开 **http://localhost:3002** 或同一局域网内的其它设备访问 `http://<这台机器的 IP>:3002`
 
-> **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.4-darwin-arm64`。
+> **macOS**：从浏览器下载的程序可能会被 Gatekeeper 拦下，放行一次即可：`xattr -d com.apple.quarantine starm-panel-v0.1.5-darwin-arm64`。
 >
 > **Windows**：若弹出「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
 

@@ -278,8 +278,6 @@ export const TEXT = {
 		networkLan: '强制内网',
 		networkWan: '强制外网',
 		/** 校验与结果提示 */
-		invalidLanUrl: '内网地址看起来不是合法的 http(s) 地址',
-		invalidWanUrl: '外网地址看起来不是合法的 http(s) 地址',
 		needAddress: '请先填写内网地址或外网地址',
 		faviconMissingLan: '未填写内网地址，换外网试试',
 		faviconMissingWan: '未填写外网地址，换内网试试',
@@ -341,7 +339,7 @@ export const TEXT = {
 		/** 交换分区小标题与「静态信息」表里的行名（缩写沿用系统口径） */
 		swap: 'SWAP',
 		used: '已用',
-		cached: '缓存/缓冲',
+		cached: '缓存',
 		free: '空闲',
 		available: '可用',
 		usedSharedWithMemory: (bytes: string) => `${bytes}（已用，与内存共享）`,

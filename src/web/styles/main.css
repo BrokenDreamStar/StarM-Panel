@@ -797,6 +797,18 @@ h3 {
   background-color: rgba(6, 9, 14, 0.55) !important;
 }
 
+/* 弹窗的缩放中心 = 面板自身中心。
+   Naive 默认 transformOrigin="mouse"：进入 / 退场时按**最近一次点击位置**算
+   transform-origin（见 modal/src/BodyWrapper.mjs 的 syncTransformOrigin），
+   于是居中的面板会朝点击点飞：点「取消」就往右下缩、点「新建卡片」就往左下缩。
+   两层弹窗（卡片编辑器 + 未保存确认）同时关闭时，一层朝自己的点击点、另一层朝
+   另一个点击点，看起来就是一个往左飞、一个往右飞。应用里的弹窗全是居中面板，
+   缩放中心必须跟着面板自己走；Naive 是行内 style 写的 origin，只能 !important 盖。
+   退场还叠了一层：上下两层不要同时开始退场，见 CardEditor.vue 的 pendingClose。 */
+.n-modal {
+  transform-origin: center !important;
+}
+
 .n-modal.n-card,
 .n-modal .n-card,
 .n-modal-presets.n-card {

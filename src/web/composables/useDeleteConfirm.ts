@@ -28,12 +28,22 @@ export function useDeleteConfirm() {
   /** 弹出确认框：确认返回 true；取消 / 关闭 / 按 Esc / 点遮罩均返回 false */
   function confirm(options: ConfirmDialogOptions): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
+      let decided: boolean | null = null
       let settled = false
-      // 关闭与取消可能同时触发，保证 Promise 只结算一次
-      const settle = (value: boolean): void => {
+      // 点按钮只记结论，真正结算放到退场结束之后
+      const decide = (value: boolean): void => {
+        decided = value
+      }
+      /**
+       * 结算放在 after-leave：调用方拿到 true 之后往往紧接着关掉自己那层弹窗
+       * （卡片编辑器删除后关闭、导入完成后关闭导入弹窗）。如果点击当帧就结算，
+       * 确认框还在退场时下一层弹窗已经开始退场 —— 两层各缩各的，观感像两个窗口
+       * 朝不同方向散开。等它退干净再放行，两段动画就是前后脚的关系。
+       */
+      const settle = (): void => {
         if (settled) return
         settled = true
-        resolve(value)
+        resolve(decided ?? false)
       }
 
       dialog.warning({
@@ -46,11 +56,12 @@ export function useDeleteConfirm() {
         negativeText: options.negativeText ?? T.common.cancel,
         positiveButtonProps: { type: 'error', size: 'small' },
         negativeButtonProps: { size: 'small' },
-        onPositiveClick: () => settle(true),
-        onNegativeClick: () => settle(false),
-        onClose: () => settle(false),
-        onMaskClick: () => settle(false),
-        onEsc: () => settle(false),
+        onPositiveClick: () => decide(true),
+        onNegativeClick: () => decide(false),
+        onClose: () => decide(false),
+        onMaskClick: () => decide(false),
+        onEsc: () => decide(false),
+        onAfterLeave: settle,
       })
     })
   }
