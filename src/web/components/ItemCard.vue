@@ -2,7 +2,7 @@
 /**
  * 桌面卡片。
  *
- * 视觉层次：图标 → 标题/副标题 → 底部状态角标（来源 + 锁定偏好）。
+ * 视觉层次：图标 → 标题/副标题 → 右上角网络警告图标（来源 / 固定偏好）。
  * 交互：左键按全局「打开方式」（ui.openMode）打开；右键打开管理菜单
  * （编辑 / 复制链接 / 新窗口）。删除只在编辑模式的移除角标与卡片编辑器里提供。
  * 进入分区编辑模式（editing）后，右上角才显示移除角标，且点击卡片改为打开编辑器。
@@ -17,6 +17,15 @@ import { TEXT as T } from '@shared/text'
 import type { Item } from '@shared/types'
 import ItemIcon from './ItemIcon.vue'
 import FaviconGlyph from './FaviconGlyph.vue'
+
+/**
+ * 卡片根节点手动承接透传属性（class / draggable / drag* 监听）。
+ *
+ * 模板有两个根节点（卡片本体 + 右键菜单的 NDropdown），Vue 不会自动把
+ * 父组件传下来的属性挂到任何一个根节点上；不显式 v-bind="$attrs" 的话，
+ * GroupSection 的 draggable 与拖拽事件会全部丢失，卡片无法拖拽排序。
+ */
+defineOptions({ inheritAttrs: false })
 
 const props = withDefaults(
   defineProps<{
@@ -41,30 +50,43 @@ const settings = useSettingsStore()
 const actions = useItemActions()
 
 const resolved = computed(() => network.resolve(props.item))
-const sourceLabel = computed(() => network.resolveSourceLabel(resolved.value.source))
-const offMode = computed(() => network.isOffMode(props.item, resolved.value))
-const locked = computed(() => props.item.networkPref !== 'auto')
 const unavailable = computed(() => resolved.value.url === null)
+
+/** 侧别文案：内网 / 外网 */
+function sideLabel(side: 'lan' | 'wan'): string {
+  return side === 'lan' ? T.common.lan : T.common.wan
+}
+
+/**
+ * 网络警告文案，可同时成立多条：
+ *   - 卡片固定了内外网偏好
+ *   - 首选一侧没配地址，实际用了另一侧
+ *   - 两侧地址都没配
+ */
+const warnings = computed<string[]>(() => {
+  const list: string[] = []
+  const pref = props.item.networkPref
+  if (pref !== 'auto') list.push(T.item.warningPinned(sideLabel(pref)))
+
+  // 首选侧：卡片固定偏好优先，否则跟随全局生效模式
+  const preferred = pref === 'auto' ? network.effectiveMode : pref
+  const fallback = preferred === 'lan' ? 'wan' : 'lan'
+  if (resolved.value.source === 'fallback') {
+    list.push(T.item.warningFallback(sideLabel(preferred), sideLabel(fallback)))
+  } else if (resolved.value.source === 'none') {
+    list.push(T.item.warningMissing)
+  }
+  return list
+})
+
+/** 右上角网络警告图标，见设置 → 首页；编辑模式下让位给移除按钮 */
+const showWarning = computed(
+  () => settings.get('ui.showCardWarning') && warnings.value.length > 0 && !props.editing,
+)
 
 const openModeLabel = computed(() =>
   settings.openMode === 'self' ? T.item.openSelf : T.item.openNewTab,
 )
-
-/** 固定偏好卡片的说明：一句话里带当前强制的那一侧 */
-const pinnedTooltip = computed(() =>
-  T.item.pinnedTooltip(props.item.networkPref === 'lan' ? T.common.lan : T.common.wan),
-)
-
-/** 地址的主机部分，用于 tooltip 里显示「实际会打开什么」 */
-const host = computed(() => {
-  const url = resolved.value.url
-  if (!url) return ''
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-})
 
 const iconSize = computed(() => (props.size === 'sm' ? 36 : props.size === 'lg' ? 56 : 50))
 
@@ -128,11 +150,12 @@ function activate(): void {
 
 <template>
   <div
+    v-bind="$attrs"
     class="item-card"
     data-glass-card
     :class="[
       `size-${size}`,
-      { dragging, unavailable, 'has-badge': offMode && !editing, 'has-actions': editing },
+      { dragging, unavailable, 'has-warning': showWarning, 'has-actions': editing },
     ]"
     role="link"
     tabindex="0"
@@ -152,27 +175,11 @@ function activate(): void {
     </div>
 
     <div class="meta">
-      <NTooltip v-if="offMode && !editing" trigger="hover">
+      <NTooltip v-if="showWarning" trigger="hover">
         <template #trigger>
-          <span class="badge" :class="`badge-${resolved.source}`">
-            {{ sourceLabel }}
-          </span>
+          <FaviconGlyph name="alert" :size="14" class="warning" />
         </template>
-        <span class="tip">
-          {{ T.item.sourceTooltip(sourceLabel) }}
-          <template v-if="host">（{{ host }}）</template>
-          <br />
-          {{ T.item.badgeTooltip }}
-        </span>
-      </NTooltip>
-
-      <NTooltip v-if="locked && !editing" trigger="hover">
-        <template #trigger>
-          <FaviconGlyph name="lock" :size="12" class="lock" />
-        </template>
-        <span class="tip">
-          {{ pinnedTooltip }}
-        </span>
+        <span class="tip">{{ warnings.join('\n') }}</span>
       </NTooltip>
 
       <button
@@ -209,9 +216,9 @@ function activate(): void {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  /* 固定高度：内容（标题 + 副标题）不得再改变卡片高度，
-     超出部分裁掉；紧凑档通过隐藏副标题来适配 */
-  height: 70px;
+  /* 固定高度：桌面与手机、所有尺寸档位都是同一个 70px，
+     内容只在内部排布，不得把卡片撑高 */
+  height: var(--card-h);
   overflow: hidden;
   border: 0;
   border-radius: var(--r-xl);
@@ -243,15 +250,15 @@ function activate(): void {
   opacity: 0.55;
 }
 
+/* 档位只改内距、图标大小与字号；高度统一由 --card-h 固定 */
 .size-sm {
-  height: 58px;
   padding: 11px 12px;
   gap: 12px;
 }
 
 .size-lg {
-  height: 86px;
-  padding: 15px 14px;
+  /* 70px 高、56px 图标：内容区 58px，图标居中后上下各约 7px，避免被 overflow 裁切 */
+  padding: 6px 14px;
   gap: 15px;
 }
 
@@ -282,14 +289,7 @@ function activate(): void {
   margin-top: 2px;
 }
 
-/* 紧凑档不显示副标题：卡片高度固定，多一行会把内容撑出卡片 */
-.size-sm .subtitle {
-  display: none;
-}
-
-/* 角标悬浮在卡片右上角，不占正文宽度；
-   「正常」态只在悬停时浮现（与 tooltip 约定一致：与全局模式不一致才常显），
-   回退态常显，正文为其预留右侧空间。 */
+/* 警告图标悬浮在卡片右上角，不占正文宽度；正文为它预留右侧空间 */
 .meta {
   position: absolute;
   top: 8px;
@@ -300,8 +300,8 @@ function activate(): void {
   flex: none;
 }
 
-.has-badge .body {
-  padding-right: 44px;
+.has-warning .body {
+  padding-right: 26px;
 }
 
 /* 编辑模式：给右上角的移除角标预留位置 */
@@ -309,37 +309,8 @@ function activate(): void {
   padding-right: 30px;
 }
 
-/* 状态角标：纯色块，无边框；只在「与全局模式不一致」时常显 */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--r-xs);
-  font-size: 11px;
-  font-family: var(--mono);
-  color: var(--text-2);
-  background: var(--surface-2);
-}
-
-.badge-fallback {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 16%, transparent);
-}
-
-.badge-none {
-  color: var(--err);
-  background: color-mix(in srgb, var(--err) 16%, transparent);
-}
-
-.badge-lan,
-.badge-wan {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-}
-
-.lock {
+/* 网络警告：来源与全局模式不一致或卡片固定了内外网偏好 */
+.warning {
   color: var(--warn);
   opacity: 0.9;
 }
@@ -369,44 +340,29 @@ function activate(): void {
 .tip {
   font-size: 12px;
   line-height: 1.5;
+  /* 多条警告用 \n 拼接，逐行显示 */
+  white-space: pre-line;
 }
 
 /*
- * 手机端：卡片按桌面卡片的比例缩放。
+ * 手机端：卡片宽度跟着两列网格走，高度仍然固定 70px。
  *
- * 桌面 md 档在 1180px 内容区里是 209×70（≈3:1）；手机上是两列、列宽随视口在
- * 138–195px 之间变。固定高度（58px）会让 320px 的屏变成 2.4:1、430px 变成 3.4:1
- * —— 窄屏显得方、宽屏显得扁。这里让高度跟着列宽走（aspect-ratio），任何宽度
- * 都保持桌面那个 ≈3:1 的比例。52px 是下限：36px 图标 + 上下各 8px 留白，再矮
- * 就压到图标了，所以 320px 这类极窄屏仍有一点偏差。
+ * 列宽由视口决定（320px 的屏上两列各约 138px），高度不随列宽伸缩 ——
+ * 所有断点、所有档位都是同一个 --card-h。固定高度容得下 36px 图标与两行文字。
  */
 @media (max-width: 640px) {
   .size-sm,
   .size-md,
   .size-lg {
-    /* width 必须写死：只给 aspect-ratio + min-height 时，浏览器会用 min-height
-       反推出一个更宽的盒子（320px 的屏上卡片会溢出所在的网格列），
-       列宽才是这一侧唯一权威的来源 */
     width: 100%;
-    height: auto;
-    aspect-ratio: 3 / 1;
-    min-height: 52px;
+    height: var(--card-h);
   }
 
-  /* 高度由比例决定后，纵向留白要收一档，否则 52px 的卡片里塞不下 36px 图标 */
   .item-card {
     padding: 8px 12px;
   }
 
-  /*
-   * 手机上保留副标题。`.size-sm` 的隐藏规则是为**桌面的窄列**服务的（150px 一列、
-   * 58px 高，两行放不下）；手机虽然也用紧凑档，但卡片高度由 3:1 比例撑到 52–65px，
-   * 只要把行高收紧一档（正文继承的 1.62 太松），两行就装得下，不必砍信息。
-   */
-  .size-sm .subtitle {
-    display: block;
-  }
-
+  /* 70px 高度下两行文字放得下，行高从继承的 1.62 收紧到 1.2 更贴合卡片 */
   .title {
     line-height: 1.2;
   }

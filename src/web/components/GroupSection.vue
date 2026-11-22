@@ -344,7 +344,7 @@ const cardSize = useCardSize()
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 70px;
+  height: var(--card-h);
   padding: 13px 15px;
   border: 0;
   border-radius: var(--r-xl);
@@ -358,14 +358,12 @@ const cardSize = useCardSize()
   transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
-/* 与 ItemCard 的三档固定高度对齐 */
+/* 高度统一由 --card-h 固定，档位只改内距 */
 .group-body.size-sm .add-tile {
-  height: 58px;
   padding: 11px 12px;
 }
 
 .group-body.size-lg .add-tile {
-  height: 86px;
   padding: 15px 14px;
 }
 
@@ -410,14 +408,12 @@ const cardSize = useCardSize()
     grid-template-columns: repeat(auto-fill, minmax(min(150px, calc(50% - 6px)), 1fr));
   }
 
-  /* 「新建卡片」位跟卡片同比例、同高度下限，同一行里不能一高一矮 */
+  /* 「新建卡片」位与卡片同高（固定 70px），同一行里上下沿对齐 */
   .group-body.size-sm .add-tile,
   .group-body.size-md .add-tile,
   .group-body.size-lg .add-tile {
     width: 100%;
-    height: auto;
-    aspect-ratio: 3 / 1;
-    min-height: 52px;
+    height: var(--card-h);
     padding: 8px 12px;
   }
 }

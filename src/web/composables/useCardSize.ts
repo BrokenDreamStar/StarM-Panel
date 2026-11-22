@@ -7,9 +7,10 @@
  * 「标签 + 数值」横排也会被截断。
  *
  * 所以手机上一律降到紧凑档 —— 卡片组件自己的 `size-sm` 分支本来就是为窄列
- * 设计的（36px 图标、标签与数值上下堆叠；桌面上它还隐藏副标题，手机上因为卡片
- * 高度由 3:1 比例撑开，副标题单独放行，见 ItemCard.vue）。断点与各组件样式里的
- * ≤640px 媒体查询保持一致（见 GroupSection / SystemStatusSection / HomeView）。
+ * 设计的（36px 图标、标签与数值上下堆叠）。这只影响列宽、内距和图标大小：
+ * 卡片高度在所有档位、所有视口下都固定 70px（`--card-h`），不随列宽伸缩。
+ * 断点与各组件样式里的 ≤640px 媒体查询保持一致（见 GroupSection /
+ * SystemStatusSection / HomeView）。
  */
 import { computed, ref, type ComputedRef } from 'vue'
 import { useSettingsStore } from '@/stores/settings'

@@ -1596,6 +1596,20 @@ watch(
 
                   <div class="row">
                     <div class="row-label">
+                      <span class="label">{{ T.settings.labels.showCardWarning }}</span>
+                      <span v-if="T.settings.hints.showCardWarning" class="hint dim">{{ T.settings.hints.showCardWarning }}</span>
+                    </div>
+                    <div class="row-control row-control--start">
+                      <NSwitch
+                        :value="settings.get('ui.showCardWarning')"
+                        size="small"
+                        @update:value="(v: boolean) => save({ 'ui.showCardWarning': v }, T.settings.labelShowCardWarning)"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="row">
+                    <div class="row-label">
                       <span class="label">{{ T.settings.labels.monitorInterval }}</span>
                       <span v-if="T.settings.hints.monitorInterval" class="hint dim">{{ T.settings.hints.monitorInterval }}</span>
                     </div>

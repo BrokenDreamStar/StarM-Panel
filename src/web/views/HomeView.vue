@@ -236,7 +236,7 @@ onUnmounted(() => {
 
 /* 骨架屏也是卡片形状：无边框，只有一层淡色块在流光 */
 .skeleton {
-  height: 70px;
+  height: var(--card-h);
   border: 0;
   border-radius: var(--r-xl);
   background: linear-gradient(

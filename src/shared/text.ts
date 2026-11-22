@@ -172,11 +172,13 @@ export const TEXT = {
 		openInNewWindow: '在新窗口打开',
 		ariaEdit: (title: string) => `${title}（点击编辑）`,
 		ariaOpen: (title: string, openMode: string) => `${title}（${openMode}）`,
-		/** 网络来源角标：实际用了哪套地址 */
-		sourceTooltip: (source: string) => `实际使用「${source}」地址`,
-		/** 角标只在「与全局模式不一致」时常显，这是它的说明 */
-		badgeTooltip: '与当前全局模式不一致时才显示此角标',
-		pinnedTooltip: (mode: string) => `该卡片固定使用${mode}地址，不随全局模式切换`,
+		/** 网络警告：卡片固定了内外网偏好 */
+		warningPinned: (mode: string) => `该卡片固定使用${mode}`,
+		/** 网络警告：首选一侧没配地址，实际用了另一侧 */
+		warningFallback: (missing: string, used: string) =>
+			`该卡片未配置${missing}地址 当前默认使用${used}`,
+		/** 网络警告：内外网地址都没配 */
+		warningMissing: '该卡片未配置内网和外网地址',
 		removeAria: (title: string) => `移除「${title}」`,
 	},
 
@@ -524,6 +526,7 @@ export const TEXT = {
 			openMode: '卡片打开方式',
 			networkMode: '默认网络模式',
 			autoMode: '自动选择网络模式',
+			showCardWarning: '显示卡片警告',
 			monitorInterval: '采样间隔',
 			hiddenInterval: '后台采样间隔',
 			// 安全
@@ -561,6 +564,7 @@ export const TEXT = {
 			openMode: '',
 			networkMode: '',
 			autoMode: '开启后通过IP访问则默认为内网 通过域名访问默认为外网',
+			showCardWarning: '关闭后不再显示卡片右上角的网络警告图标',
 			monitorInterval: '设置面板处于前台时的硬件状态采样周期',
 			hiddenInterval: '设置页面切入后台时的硬件状态采样周期',
 			// 安全
@@ -684,6 +688,7 @@ export const TEXT = {
 		labelWallpaper: '壁纸',
 		labelWallpaperText: '壁纸文字颜色',
 		labelShowClock: '首页时钟',
+		labelShowCardWarning: '卡片警告',
 		labelShowMonitor: '系统状态分区',
 
 		// ── 首页 ──

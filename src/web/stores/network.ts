@@ -17,9 +17,9 @@ import { defineStore } from 'pinia'
 import { api } from '@/api/client'
 import { NETWORK_MODE_KEY } from '@/api/settings'
 import { useSettingsStore } from '@/stores/settings'
-import { resolveUrl, describeSource, isLanHost } from '@shared/resolve-url'
+import { resolveUrl, isLanHost } from '@shared/resolve-url'
 import { TEXT as T } from '@shared/text'
-import type { Item, NetworkMode, ResolvedUrl, ResolveSource } from '@shared/types'
+import type { Item, NetworkMode, ResolvedUrl } from '@shared/types'
 
 const MODES: readonly NetworkMode[] = ['lan', 'wan']
 
@@ -75,19 +75,6 @@ export const useNetworkStore = defineStore('network', () => {
    */
   function resolve(item: Item): ResolvedUrl {
     return resolveUrl(item, { mode: effectiveMode.value })
-  }
-
-  function resolveSourceLabel(source: ResolveSource): string {
-    return describeSource(source)
-  }
-
-  /** 卡片实际使用的地址是否与全局模式「不一致」（需要显示来源角标） */
-  function isOffMode(item: Item, resolved: ResolvedUrl): boolean {
-    if (resolved.source === 'none') return true
-    if (resolved.source === 'fallback') return true
-    // 卡片级强制偏好覆盖了全局模式 → 也算偏离
-    if (item.networkPref !== 'auto') return true
-    return resolved.source !== effectiveMode.value
   }
 
   /**
@@ -151,8 +138,6 @@ export const useNetworkStore = defineStore('network', () => {
     syncedFromServer,
     persistError,
     resolve,
-    resolveSourceLabel,
-    isOffMode,
     setMode,
     setAutoMode,
     toggleMode,

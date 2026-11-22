@@ -7,7 +7,7 @@
  *
  * 进度条配色由 barLevel 决定（>=75% 警告、>=90% 危险）。
  * 没有「比例」语义的卡片（system / 无可比指标的 GPU）**不画空进度条**，
- * 靠统一的 min-height 保持整排高度一致。
+ * 靠统一的固定高度（--card-h）保持整排高度一致。
  */
 import { computed } from 'vue'
 import { useMonitorStore } from '@/stores/monitor'
@@ -243,7 +243,7 @@ const ratio = computed<number | null>(() => {
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 70px;
+  height: var(--card-h);
   padding: 12px 13px;
   font: inherit;
   text-align: left;
@@ -267,10 +267,9 @@ const ratio = computed<number | null>(() => {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 34%, transparent), var(--shadow-2);
 }
 
-/* 紧凑档：列宽被压到 150px，横向放不下「标签 + 数值」，
+/* 紧凑档：列宽被压到 160px，横向放不下「标签 + 数值」，
    改成上面标签、下面数值的堆叠版式，数值独占整行宽度，不再被截断 */
 .size-sm {
-  height: 58px;
   padding: 8px 11px;
   gap: 6px;
 }
@@ -302,7 +301,6 @@ const ratio = computed<number | null>(() => {
 }
 
 .size-lg {
-  height: 86px;
   padding: 15px 15px;
   gap: 12px;
 }
@@ -428,19 +426,15 @@ const ratio = computed<number | null>(() => {
 }
 
 /*
- * 手机端：与 App 卡片同一套比例（见 ItemCard.vue 的同段注释）——
- * 高度跟随列宽，保持桌面 ≈3:1 的长宽比。
- * 下限 56px 是紧凑档内容的需要：11px 标签 + 13px 数值 + 4px 进度条 + 留白。
+ * 手机端：与 App 卡片一致 —— 宽度跟着两列网格走，高度固定 70px，
+ * 不随列宽伸缩。紧凑档的「标签 / 数值」上下堆叠在 70px 内仍放得下。
  */
 @media (max-width: 640px) {
   .size-sm,
   .size-md,
   .size-lg {
-    /* width 写死，避免 min-height 反推宽度把卡片撑出网格列（见 ItemCard.vue） */
     width: 100%;
-    height: auto;
-    aspect-ratio: 3 / 1;
-    min-height: 56px;
+    height: var(--card-h);
   }
 
   .stat-card {

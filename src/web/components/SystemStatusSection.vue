@@ -231,7 +231,7 @@ function onDrop(card: StatCardRef): void {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 70px;
+  height: var(--card-h);
   padding: 13px 15px;
   border: 0;
   border-radius: var(--r-xl);
@@ -245,14 +245,12 @@ function onDrop(card: StatCardRef): void {
   transition: background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
-/* 「添加卡片」位跟随卡片尺寸，与硬件卡片等高 */
+/* 「添加卡片」位与硬件卡片同高（由 --card-h 固定），档位只改内距 */
 .stat-grid.size-sm .add-tile {
-  height: 58px;
   padding: 10px 12px;
 }
 
 .stat-grid.size-lg .add-tile {
-  height: 86px;
   padding: 15px 15px;
 }
 
@@ -359,14 +357,12 @@ function onDrop(card: StatCardRef): void {
     grid-template-columns: repeat(auto-fill, minmax(min(160px, calc(50% - 6px)), 1fr));
   }
 
-  /* 「添加卡片」位与卡片同比例、同高度下限（见 ItemCard.vue 的比例说明） */
+  /* 「添加卡片」位与卡片同高（固定 70px），保证同一行上下沿对齐 */
   .stat-grid.size-sm .add-tile,
   .stat-grid.size-md .add-tile,
   .stat-grid.size-lg .add-tile {
     width: 100%;
-    height: auto;
-    aspect-ratio: 3 / 1;
-    min-height: 56px;
+    height: var(--card-h);
     padding: 8px 12px;
   }
 }

@@ -83,7 +83,7 @@ export function isLanHost(hostname: string): boolean {
 }
 
 /**
- * 源标记的可读文案，供卡片角标使用。
+ * 源标记的可读文案。
  */
 export function describeSource(source: ResolveSource): string {
   switch (source) {

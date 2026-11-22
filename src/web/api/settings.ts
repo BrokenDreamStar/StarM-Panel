@@ -101,6 +101,8 @@ export const SETTINGS_DEFAULTS = {
   'ui.glassChroma': false,
   /** 首页标题旁是否显示时钟与日期 */
   'ui.showClock': true,
+  /** 卡片右上角是否显示网络警告图标（来源与全局不同 / 已固定偏好） */
+  'ui.showCardWarning': true,
   /** 首页标题，留空则显示 "StarM Panel" */
   'ui.title': '',
   /** 卡片打开方式（全局）：新窗口 / 当前窗口 */
